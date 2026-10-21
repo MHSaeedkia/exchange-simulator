@@ -46,7 +46,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` (through the proxy) | WS `wss://stream.bybit.com/v5/public/spot`, REST `https://api.bybit.com` | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
 | 7 | ompfinex | REST snapshot + Centrifugo WS delta (captured 2026-10-21) | `wss://stream.ompfinex.com/stream`, REST `https://api.ompfinex.com/v1` | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
 | 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST `https://www.okx.com/api/v5/market/books` — both through the proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
-| 9 | lbank | WS `fdepth`, snapshot only | NOT KNOWN | `btc_usdt` (lower case, underscore) | none (null) | `TS` ISO without zone, read as UTC |
+| 9 | lbank | WS `fdepth`, snapshot only (+ a REST branch never used today) | `wss://www.lbank.com/old-wss/ccws/ws/V3`, REST `https://api.lbkex.com` — both through the proxy | `btc_usdt` (lower case, underscore) | none (null) | `TS` ISO without zone, read as UTC |
 
 ## Per exchange — details
 
@@ -58,7 +58,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Built in step 7 — see § bybit below.
 - **ompfinex (7)**: built in step 8 — see § ompfinex below.
 - **okx (8)**: built in step 1 (from the okx-only version). Subscribe/unsubscribe `{"op":"subscribe|unsubscribe","args":[{"channel":"books","instId":"BTC-USDT"}]}`; ack `{"event":"subscribe","arg":{…},"connId":…}`; errors 60012 / 60018; text `ping` → `pong`. Frame `{"arg":{…},"action":"snapshot|update","data":[{asks,bids,ts,checksum,prevSeqId,seqId}]}`, 4-element levels, 400 levels on a snapshot. REST `{"code":"0","msg":"","data":[{asks,bids,ts,seqId}]}`.
-- **lbank (9)**: `{"depth":{asks,bids},"SERVER":"V3","count":200,"limit":50,"type":"fdepth","pair":"btc_usdt","TS":"2026-08-25T17:46:51.723"}`. Ping `{"action":"ping","ping":"…"}` and sub-ack `{"status":"success","pair":"btc_usdt"}` exist only as hand-made test fixtures. Subscribe NOT KNOWN.
+- **lbank (9)**: built in step 9 — see § lbank below.
 
 ## Filled in from NiFi exports
 
@@ -271,3 +271,32 @@ frames = ping → `{}`). Subscribe **`{"id":2,"${status:replace('pending-', '')}
 - REST 200 (`Content-Type: application/json`, no charset): `{"status":"OK","data":{"lastUpdateId":N,"time":<µs>,"bids":[…],"asks":[…]}}`,
   **25 levels by default**, 50 with `limit=50`; bids desc, asks asc. Unknown market → 400
   `{"status":"BAD_REQUEST","message":"Invalid market."}` (not copied).
+
+### lbank (9) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `LBANK`):** WS AND REST **through the proxy**. Subscribe
+**`{"symbol": "${market}","pair": "${market}","action": "${status:replace('pending-', '')}","subscribe": "fdepth","depth": "50","limit": "50","clientType": ""}`**.
+**Ping path = every frame of ≤ 60 bytes**: ReplaceText regex `"ping"\s*:\s*"([^"]+)"\s*,\s*"action"\s*:\s*"ping"`
+→ `"pong":"$1","action":"pong"` → PutWebSocket. `snapshot_request` → InvokeHTTP (proxy)
+`GET https://api.lbkex.com/v2/depth.do?symbol=${pair}&size=50` → Jolt action/pair → ex9-raw.
+⚠ The LBANK ConnectWebSocket's client id is `#{bitget.web_socket.client_id}` (BITGET's) — each
+group has its own JettyWebSocketClient, so probably harmless; reported to the user, not changed.
+
+**Real lbank (probed from a dev Mac):**
+- ack is **plain text** `<40 chars [A-Za-z0-9-]>_fdepth_btc_usdt_50` (59 bytes; same on a repeat),
+  then the book at once, then ~2 frames/s. **59 ≤ 60 → NiFi's ping path echoes the ack back**,
+  and lbank answers `{"SERVER":"V3","message":"message","status":"error","TS":…}` (→ Kafka, dropped).
+- unsubscribe → no reply; `"subscribe":"foo"` → no reply; no `depth` → `"Missing parameter ['depth']"`;
+  unknown pair → `"Invalid order pairs:[nope_usdt]"` (not copied); not-JSON → `"message"`.
+- server ping `{"ping":"<ms>","action":"ping"}` every 60 s, first at 0.5/3.7/6.8/19.9 s (server-wide
+  clock); correct pong (even twice) → no reply; wrong id → `"[<id>] is not a ping"`; client ping
+  `{"action":"ping","ping":X}` → `{"action":"pong","pong":X}`.
+- **No pong: closed 1001 "server-heartbeat-timeout" when the 7th ping was due** (6 unanswered, 379.9 s).
+- frame `{"depth":{"asks","bids"},"SERVER":"V3","count":50,"limit":50,"type":"fdepth","pair":"btc_usdt","TS":"2026-10-22T04:16:24.032"}`,
+  50/50, asks asc / bids desc, prices padded to 2 decimals, quantities 5 decimals.
+- **⚠ `TS` is China time (UTC+8)** — UTC 20:16:00 read `04:16:24` next day. lpa-core's LBankParser
+  reads TS as UTC (user decision 2026-08-26) → ex9 event times 8 h in the FUTURE. Reported to
+  the user as an lpa-core finding; the simulator sends UTC+8 like real lbank.
+- REST: `{"result":"true","msg":"Success","data":{"asks","bids","timestamp"},"error_code":0,"ts":…}`
+  (`application/json;charset=UTF-8`, prices trimmed); **no `size` (or no/unknown symbol) → no
+  `data` key at all**. LBankParser drops the REST body anyway (no depth/TS).

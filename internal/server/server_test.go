@@ -26,6 +26,7 @@ import (
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/domain"
 	"exchange-simulator/internal/exchange/bitget"
+	"exchange-simulator/internal/exchange/lbank"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
 	"exchange-simulator/internal/exchange/ramzinex"
@@ -671,4 +672,68 @@ func TestPingKeepsItOpen(t *testing.T) {
 		}
 	}
 	<-done
+}
+
+// lbankClient dials an lbank whose ping times are short enough for a test.
+func lbankClient(t *testing.T, opts lbank.Options) *websocket.Conn {
+	t.Helper()
+	ws := domain.Endpoint{Host: "www.lbank.com", Port: 443, Path: "/old-wss/ccws/ws/V3"}
+	opts.ID, opts.WS = 9, ws
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := lbank.New(opts)
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+ws.Path, http.Header{"Host": []string{ws.Host}})
+	require.NoError(t, err)
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// Real lbank pings {"ping":"<ms>","action":"ping"} soon after connect, then every 60 s. NiFi's
+// answer, {"pong":"<same>","action":"pong"}, gets no reply; an id never sent is an error.
+func TestTextPingWithItsOwnIDAndPongCheck(t *testing.T) {
+	c := lbankClient(t, lbank.Options{PingFirst: 10 * time.Millisecond, PingEvery: time.Hour})
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(time.Second)))
+	_, b, err := c.ReadMessage()
+	require.NoError(t, err)
+	assert.Regexp(t, `^\{"ping":"\d{13}","action":"ping"\}$`, string(b))
+
+	pong := strings.NewReplacer(`"ping":`, `"pong":`, `"action":"ping"`, `"action":"pong"`).Replace(string(b))
+	send(t, c, pong)
+	send(t, c, pong)
+	send(t, c, `{"pong":"1","action":"pong"}`)
+	_, b, err = c.ReadMessage()
+	require.NoError(t, err)
+	assert.Regexp(t, `^\{"SERVER":"V3","message":"\[1\] is not a ping","status":"error","TS":"[0-9T:.-]+"\}$`, string(b),
+		"the two right pongs got no reply; the wrong one did")
+}
+
+// Real lbank closes 1001 "server-heartbeat-timeout" when its 7th ping is due and the 6 before
+// got no pong (measured at 379.9 s). NiFi answers every ping, so NiFi is never cut.
+func TestMissedPingsClose(t *testing.T) {
+	c := lbankClient(t, lbank.Options{PingFirst: 10 * time.Millisecond, PingEvery: 20 * time.Millisecond})
+	pings := 0
+	start := time.Now()
+	require.NoError(t, c.SetReadDeadline(start.Add(2*time.Second)))
+	for {
+		_, b, err := c.ReadMessage()
+		if err != nil {
+			var ce *websocket.CloseError
+			require.ErrorAs(t, err, &ce)
+			assert.Equal(t, 1001, ce.Code)
+			assert.Equal(t, "server-heartbeat-timeout", ce.Text)
+			break
+		}
+		if strings.Contains(string(b), `"action":"ping"`) {
+			pings++
+		}
+	}
+	assert.Equal(t, 6, pings, "six unanswered pings, closed when the seventh was due")
 }

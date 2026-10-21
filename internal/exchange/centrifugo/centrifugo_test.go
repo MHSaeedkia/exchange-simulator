@@ -171,9 +171,9 @@ func TestHeartbeat(t *testing.T) {
 	assert.Equal(t, 8*time.Second, h.PongTimeout)
 	assert.Equal(t, 3012, h.CloseCode)
 	assert.Equal(t, "no pong", h.CloseText)
-	assert.True(t, h.IsPong([]byte(`{}`)))
-	assert.False(t, h.IsPong([]byte(`{"id":1,"connect":{}}`)))
-	assert.False(t, h.IsPong([]byte(`hello`)))
+	assert.True(t, h.IsPong("c1", []byte(`{}`)))
+	assert.False(t, h.IsPong("c1", []byte(`{"id":1,"connect":{}}`)))
+	assert.False(t, h.IsPong("c1", []byte(`hello`)))
 }
 
 // Real ompfinex: the subscribe ack is an empty object, {"id":2,"subscribe":{}}.

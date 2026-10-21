@@ -23,7 +23,7 @@
 - [x] bitget (5) — books50, real replies, the 2-min no-ping cut (NiFi gets cut, as on real bitget); live check at the end
 - [x] bybit (6) — WS + REST (through the proxy), real replies and the 10-arg rule; no idle cut (11-min probe); live check at the end
 - [x] ompfinex (7) — deltas-only WS, REST depth as the only snapshot; the unasked-`{}` 3501 rule fixed for all Centrifugo; live check at the end
-- [ ] lbank (9)
+- [x] lbank (9) — fdepth, plain-text ack, its ping/pong and the 6-missed-pings close, TS in UTC+8 as real; live check at the end
 
 For each: a block in `config.known` + `.env.example` + an alias line in `deploy/docker-compose.yml`, a package under `internal/exchange/`, a case in `main.newExchange`, tests against `docs/sample-raw-data.md`, a section in [[exchange-protocols]].
 
@@ -31,6 +31,8 @@ For each: a block in `config.known` + `.env.example` + an alias line in `deploy/
 
 - [ ] Live check every exchange with a NiFi-like client, then the whole redirect with NiFi
 - [ ] Decide the `EXCHANGES_RUNNING` default (today `okx` only: the others start stopped)
+- [ ] Tell lpa-core (user's call): real lbank `TS` is UTC+8 but LBankParser reads it as UTC → ex9 event times 8 h ahead
+- [ ] Tell NiFi owner (user's call): LBANK ConnectWebSocket uses BITGET's client id; lbank's 59-byte ack is echoed back by the ≤60-byte ping path
 
 ## Later (ask the user first)
 

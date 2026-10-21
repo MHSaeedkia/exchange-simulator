@@ -246,7 +246,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		}
 		// The answer to an outstanding text ping is the server's: it does not reach the
 		// exchange. An answer nobody asked for does (Centrifugo closes on it).
-		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.lastPing.Load() > c.lastPong.Load() && c.heartbeat.IsPong(msg) {
+		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.lastPing.Load() > c.lastPong.Load() && c.heartbeat.IsPong(c.id, msg) {
 			c.lastPong.Store(time.Now().UnixNano())
 			continue
 		}
@@ -268,10 +268,16 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 func (s *Server) write(c *conn, ex exchange.Exchange) {
 	var beat, beatCheck, ping, pongCheck, life, idleCheck <-chan time.Time
 	var beatAt int64 // unix nanos of the text ping whose answer is awaited
+	missed := 0      // text pings in a row with no answer
+	var beatTimer *time.Timer
 	if hb := c.heartbeat; hb != nil {
-		ticker := time.NewTicker(hb.Every)
-		defer ticker.Stop()
-		beat = ticker.C
+		first := hb.First
+		if first == 0 {
+			first = hb.Every
+		}
+		beatTimer = time.NewTimer(first)
+		defer beatTimer.Stop()
+		beat = beatTimer.C
 	}
 	var pongTimer *time.Timer
 	if k := c.keepalive; k != nil {
@@ -299,7 +305,22 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 			return
 		case msg = <-c.queue:
 		case now := <-beat:
+			beatTimer.Reset(c.heartbeat.Every)
+			if c.heartbeat.MissedLimit > 0 {
+				if last := c.lastPing.Load(); last != 0 && c.lastPong.Load() < last {
+					missed++
+				} else {
+					missed = 0
+				}
+				if missed >= c.heartbeat.MissedLimit {
+					s.closeWith(c, ex, c.heartbeat.CloseCode, c.heartbeat.CloseText)
+					return
+				}
+			}
 			msg = c.heartbeat.Msg
+			if c.heartbeat.MsgFor != nil {
+				msg = c.heartbeat.MsgFor(c.id, now)
+			}
 			c.lastPing.Store(now.UnixNano())
 			if c.heartbeat.PongTimeout > 0 && beatCheck == nil {
 				beatAt, beatCheck = now.UnixNano(), time.After(c.heartbeat.PongTimeout)

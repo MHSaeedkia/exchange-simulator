@@ -215,6 +215,15 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.1", qtyMin: "0.00000100", qtyMax: "0.02000000",
 		seqStart: "7745000", seqStepMin: "1", seqStepMax: "3", // u − U: 1…3 seen
 	},
+	{
+		name: "lbank", id: "9",
+		// NiFi reaches both through its proxy (the simulator's proxy in a test).
+		wsHost: "www.lbank.com", wsPort: "443", wsPath: "/old-wss/ccws/ws/V3",
+		restHost: "api.lbkex.com", restPort: "443", restPath: "/v2/depth.do",
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // fdepth: the whole book on every frame
+		basePrice: "84000.00", priceStep: "0.01", qtyMin: "0.00001", qtyMax: "9.50000", // prices with two decimals, as lbank writes them
+		seqStart: "1", seqStepMin: "1", seqStepMax: "1", // no sequence on the wire
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

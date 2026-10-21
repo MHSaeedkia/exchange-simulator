@@ -183,3 +183,16 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
 - ompfinex keeps a per-market Centrifugo offset (+1 per push) apart from u (step 1…3);
   safe without a lock because Snapshot/Update run on the feed goroutine only.
 - Verified: `go test -race ./...` green. NOT live.
+
+# Step 9 — lbank (2026-10-21) — all 9 exchanges built
+
+- `Heartbeat` grew: `MsgFor(connID, now)` (lbank's ping carries its send time), `First`
+  (first ping delay; lbank: random in the first minute), `IsPong(connID, msg)` (lbank checks the
+  id against the pings that connection got), `MissedLimit` (lbank: 6 unanswered → close 1001
+  when the 7th is due). The server counts missed pings at each tick.
+- lbank's handler sees only repeat/stranger pongs (the server takes the outstanding one).
+- Startup check: the binary loads all 9 (`/status` lists 9), ports 443 + 8443 + proxy 2053.
+- **Gotcha found:** a simulator started for the step-1b proxy check kept running for ~1.5 h:
+  the "stopped" check used `pgrep -f scratchpad/run/sim` but the process command line was
+  `./sim -env …`. Stop background test binaries by PID and check the PID.
+- Verified: `go test -race ./...` green. NOT live (live checks at the end).

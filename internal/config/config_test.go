@@ -68,7 +68,8 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
 	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir", "api.wallex.ir",
 		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com",
-		"stream.bybit.com", "api.bybit.com", "stream.ompfinex.com", "api.ompfinex.com"}, cfg.Hosts())
+		"stream.bybit.com", "api.bybit.com", "stream.ompfinex.com", "api.ompfinex.com",
+		"www.lbank.com", "api.lbkex.com"}, cfg.Hosts())
 
 	nobitex, ok := cfg.Exchange("nobitex")
 	require.True(t, ok)
@@ -127,6 +128,14 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Endpoint{Host: "api.ompfinex.com", Port: 443, Path: "/v1/market/"}, ompfinex.REST, "NiFi's snapshot branch: /v1/market/${pair}/depth")
 	assert.Equal(t, int64(1), ompfinex.SeqStepMin, "u − U: 1…3 seen")
 	assert.Equal(t, int64(3), ompfinex.SeqStepMax)
+
+	lbank, ok := cfg.Exchange("lbank")
+	require.True(t, ok)
+	assert.Equal(t, int64(9), lbank.ID)
+	assert.Equal(t, domain.Endpoint{Host: "www.lbank.com", Port: 443, Path: "/old-wss/ccws/ws/V3"}, lbank.WS, "the REAL address, through the proxy")
+	assert.Equal(t, domain.Endpoint{Host: "api.lbkex.com", Port: 443, Path: "/v2/depth.do"}, lbank.REST, "NiFi's snapshot branch, through the proxy")
+	assert.Equal(t, 50, lbank.Defaults.BookDepth)
+	assert.Equal(t, 2, lbank.Shape.PriceScale(), "lbank writes BTC prices with two decimals")
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {

@@ -47,6 +47,8 @@ services:
           - ${BYBIT_REST_HOST:-api.bybit.com}
           - ${OMPFINEX_WS_HOST:-stream.ompfinex.com}
           - ${OMPFINEX_REST_HOST:-api.ompfinex.com}
+          - ${LBANK_WS_HOST:-www.lbank.com}
+          - ${LBANK_REST_HOST:-api.lbkex.com}
 
 networks:
   lpa:

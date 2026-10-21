@@ -79,7 +79,7 @@ func (p *Protocol) SeqStep(*mrand.Rand) int64 { return 1 }
 func (p *Protocol) Heartbeat() exchange.Heartbeat {
 	return exchange.Heartbeat{
 		Msg: []byte("{}"), Every: p.opts.PingEvery, PongTimeout: p.opts.PongTimeout,
-		IsPong: func(msg []byte) bool {
+		IsPong: func(_ string, msg []byte) bool {
 			c, ok := parse(msg)
 			return ok && c.isPong()
 		},

@@ -13,8 +13,8 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5),
-bybit (6), ompfinex (7). Still to add: lbank (9).
+**Exchanges:** all 9 — nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5), bybit (6),
+ompfinex (7), okx (8), lbank (9).
 
 ## Run it
 
@@ -158,6 +158,23 @@ A book's start is the REST snapshot `GET https://api.ompfinex.com/v1/market/14/d
 `{"status":"OK","data":{"lastUpdateId":N,"time":<µs>,"bids":[…],"asks":[…]}}`, which lpa-core asks
 for when a delta finds no baseline.
 
+### lbank (9)
+
+`wss://www.lbank.com/old-wss/ccws/ws/V3`; REST `https://api.lbkex.com/v2/depth.do` (NiFi reaches
+both through its proxy).
+
+| Client sends | Fake answers |
+|---|---|
+| `{"symbol": "btc_usdt","pair": "btc_usdt","action": "subscribe","subscribe": "fdepth","depth": "50",…}` | plain text `<token>_fdepth_btc_usdt_50`, then the whole book at once |
+| the same with `"action": "unsubscribe"` | nothing; that market stops |
+| (server, every 60 s; the first at a random point of the first minute) | `{"ping":"<ms>","action":"ping"}`; 6 unanswered in a row → close `1001 server-heartbeat-timeout` |
+| `{"pong":"<that ms>","action":"pong"}` | nothing; any other id → `{"SERVER":"V3","message":"[id] is not a ping",…}` |
+| text it cannot read (NiFi echoes the 59-byte ack: it takes ≤ 60-byte frames as pings) | `{"SERVER":"V3","message":"message","status":"error","TS":…}` |
+| no `depth` | `{"SERVER":"V3","message":"Missing parameter ['depth']",…}` |
+
+Frames: `{"depth":{"asks":[…],"bids":[…]},"SERVER":"V3","count":50,"limit":50,"type":"fdepth","pair":"btc_usdt","TS":"2026-10-22T04:16:24.032"}`
+— `TS` is **China time (UTC+8)**, as real lbank sends it.
+
 ### wallex (3)
 
 `wss://api.wallex.ir/ws`. No REST. Copies real wallex exactly:
@@ -224,6 +241,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
 | `internal/exchange/bybit` | bybit: orderbook.50 frames, replies, REST order book |
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
+| `internal/exchange/lbank` | lbank: fdepth frames, plain-text acks, its ping/pong, REST depth |
 | `internal/exchange/nobitex` | nobitex: its book frame |
 | `internal/exchange/bitget` | bitget: books50 frames, replies, the idle cut |
 | `internal/exchange/bitpin` | bitpin: its book frame |

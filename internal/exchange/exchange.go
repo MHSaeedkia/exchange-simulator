@@ -74,12 +74,20 @@ type Exchange interface {
 // Heartbeat is an exchange's own text ping (Centrifugo's {} every 25 s), sent by the server
 // to every client from connect on.
 type Heartbeat struct {
-	Msg   []byte
-	Every time.Duration
-	// After each ping the client must send a message IsPong takes within PongTimeout, or
-	// the server closes the socket with CloseCode / CloseText. PongTimeout 0 = not checked.
+	Msg []byte
+	// MsgFor, when set, builds each ping instead of Msg (lbank's carries its send time);
+	// connID is the connection's Session ID.
+	MsgFor func(connID string, now time.Time) []byte
+	Every  time.Duration
+	First  time.Duration // the first ping this long after connect; 0 = Every
+	// IsPong says whether a client message on connection connID answers a ping. While a ping
+	// is outstanding the server takes that answer itself (it does not reach the exchange).
+	IsPong func(connID string, msg []byte) bool
+	// After each ping the client must answer within PongTimeout (0 = not checked), and when
+	// MissedLimit pings in a row got no answer the next ping is a close instead (0 = never):
+	// either way the server closes the socket with CloseCode / CloseText.
 	PongTimeout time.Duration
-	IsPong      func(msg []byte) bool
+	MissedLimit int
 	CloseCode   int
 	CloseText   string
 }
