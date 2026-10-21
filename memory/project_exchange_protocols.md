@@ -39,7 +39,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | # | exchange | feed | known endpoint | market key (DB) | sequence | event time |
 |---|---|---|---|---|---|---|
 | 1 | nobitex | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://ws.nobitex.ir/connection/websocket` | `BTCUSDT` (WS channel `public:orderbook-BTCUSDT`) | WS `pub.offset`, jump 0; REST null | `lastUpdate` epoch ms (number) |
-| 2 | bitpin | REST snapshot + WS Centrifugo, both full snapshots | NOT KNOWN | `BTC_USDT` (underscore, REST `pair` must match) | WS `pub.offset`, jump 0; REST null | WS ISO string, REST epoch ms number |
+| 2 | bitpin | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://centrifugo.bitpin.ir/connection/websocket` | `BTC_USDT` (underscore, REST `pair` must match) | WS `pub.offset`, jump 0; REST null | WS ISO string, REST epoch ms number |
 | 3 | wallex | WS only; each frame = full snapshot of ONE side | `wss://api.wallex.ir/ws` | `BTCUSDT` (`BTCUSDT@buyDepth` / `@sellDepth`) | none (null) | none (processing time) |
 | 4 | ramzinex | WS Centrifugo, full snapshot both sides | NOT KNOWN | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
 | 5 | bitget | WS `books50`, snapshot only | NOT KNOWN | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
@@ -51,7 +51,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 ## Per exchange — details
 
 - **nobitex (1)**: WS frame `{"push":{"channel":"public:orderbook-BTCUSDT","pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`, levels `[str,str]`, 24/side. Built in step 2 — see § nobitex below.
-- **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price` (number), `event_time`; 50 levels. Subscribe NOT KNOWN.
+- **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price`, `event_time`; 50 levels. Built in step 3 — see § bitpin below.
 - **wallex (3)**: first frame `{"sid":…,"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Subscribe NOT KNOWN.
 - **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Subscribe NOT KNOWN.
@@ -129,3 +129,22 @@ Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
 - server ping `{}` (first at ~18 s, then every 25 s); client answers `{}`.
 - pushes ~1/s per market, ~1.2 KB, **24 levels per side**, offset **+1 per push**, keys
   exactly `push.channel`, `push.pub.{data,offset}`, `data.{asks,bids,lastTradePrice,lastUpdate}`.
+
+### bitpin (2) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `BITPIN`):** the SAME flow as NOBITEX (connect `{"id":1,"connect":{}}`,
+≤10-byte frames = ping → `{}` back, reset to `pending-subscribe` on disconnect,
+`snapshot_request` dropped, no REST, no proxy). Only the channel differs:
+**`{"id":1,"${status:replace('pending-', '')}":{"channel":"orderbook:${market}"}}`**.
+
+**Real bitpin, measured from a dev Mac:**
+- Same Centrifugo replies as nobitex; connect says **`"version":"6.9.2 OSS"`**.
+- Live-confirmed: `trades:BTC_USDT` → `{"id":1,"error":{"code":102,"message":"unknown channel"}}`;
+  repeat subscribe → error 105; unknown market `orderbook:NOPE_USDT` accepted; no snapshot on subscribe.
+- `{}` ping first at ~19 s. Pushes irregular (several per second at times), ~3 KB.
+- **`data` is written Python-style**: `{"bids": [["84264.78", "0.00713113"], …], "asks": […],
+  "volume_ask": "2.52660052", "volume_bid": "2.33289293", "symbol": "BTC_USDT", "event":
+  "market_data", "price": "84300.00", "event_time": "2026-10-21T19:14:48.495001Z"}` — space after
+  every `:` and `,` inside `data` only (the envelope has none). 50 levels per side, bids first.
+- **`price` is now a STRING** (`"84300.00"`); the July sample had a number. Parser ignores it.
+- Prices padded to 2 decimals, quantities 8 decimals.

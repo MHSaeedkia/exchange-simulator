@@ -162,6 +162,14 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.01", qtyMin: "0.000001", qtyMax: "0.200000",
 		seqStart: "100000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
 	},
+	{
+		name: "bitpin", id: "2",
+		wsHost: "centrifugo.bitpin.ir", wsPort: "443", wsPath: "/connection/websocket",
+		// No REST: NiFi's live BITPIN group makes no REST call.
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // bitpin sends 50 levels, every push the whole book
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.00000001", qtyMax: "0.20000000",
+		seqStart: "3000000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

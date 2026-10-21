@@ -27,6 +27,9 @@ func ParseDecimal(s string) (Decimal, error) {
 	return Decimal{Units: units, Scale: len(frac)}, nil
 }
 
+// String prints d with all Scale decimals: 6277010 at scale 2 is "62770.10".
+func (d Decimal) String() string { return format(d.Units, d.Scale, false) }
+
 // at returns d's units at a scale at least d.Scale.
 func (d Decimal) at(scale int) int64 {
 	u := d.Units

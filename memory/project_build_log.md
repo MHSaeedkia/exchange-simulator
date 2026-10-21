@@ -83,3 +83,16 @@ Facts in [[exchange-protocols]] § nobitex (flow + live probe). Decisions:
 - `EXCHANGES_RUNNING` default stays `okx`: nobitex starts STOPPED unless listed.
 
 Verified: `go test -race ./...` green. NOT run live (user: live checks after all exchanges).
+
+# Step 3 — bitpin + shared Centrifugo package (2026-10-21)
+
+- **`internal/exchange/centrifugo`**: the Centrifugo server protocol (connect / subscribe /
+  unsubscribe / pong / error 102 / `{}` heartbeat / push envelope / SeqStep 1 / NiFi
+  envelope). An exchange EMBEDS `*centrifugo.Protocol` and adds only its book frame.
+  nobitex moved onto it; its protocol tests moved to the centrifugo package. ramzinex and
+  ompfinex (also Centrifugo) should reuse it.
+- `Protocol.Push(market, offset, data []byte)` keeps `data` byte for byte, because bitpin
+  writes it with Python-style spaces (copied, ~10 % of the frame bytes — matters for load).
+- `domain.Decimal.String()` added (prints all Scale decimals) for bitpin's `volume_*` sums.
+- Not copied: bitpin's 2-decimal price padding ("84150.00" → here "84150").
+- Verified: `go test -race ./...` green. NOT run live (live checks at the end).

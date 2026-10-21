@@ -13,7 +13,7 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1). The others are added one by one: bitpin (2),
+**Exchanges so far:** okx (8), nobitex (1), bitpin (2). The others are added one by one:
 wallex (3), ramzinex (4), bitget (5), bybit (6), ompfinex (7), lbank (9).
 
 ## Run it
@@ -92,6 +92,13 @@ Centrifugo at `wss://ws.nobitex.ir/connection/websocket`. No REST.
 Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`.
 `offset` moves by one per push.
 
+### bitpin (2)
+
+Centrifugo at `wss://centrifugo.bitpin.ir/connection/websocket`, channel `orderbook:BTC_USDT`.
+No REST. The same protocol and replies as nobitex (version `6.9.2 OSS`). Every push is the
+WHOLE book (50 levels), written as bitpin writes it, with spaces:
+`{"push":{"channel":…,"pub":{"data":{"bids": […], "asks": […], "volume_ask": …, "volume_bid": …, "symbol": …, "event": "market_data", "price": …, "event_time": "…Z"},"offset":N}}}`.
+
 ## kafka mode
 
 Set `OUTPUT_MODE=kafka`. Each exchange sends every `exchange_markets` row of its id whose
@@ -137,7 +144,9 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/domain` | the book, settings, counters, endpoints |
 | `internal/exchange` | the contract every exchange implements |
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
-| `internal/exchange/nobitex` | nobitex: Centrifugo frames and replies, what NiFi adds |
+| `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
+| `internal/exchange/nobitex` | nobitex: its book frame |
+| `internal/exchange/bitpin` | bitpin: its book frame |
 | `internal/feed` | one generator per exchange: owns its books, keeps the rate, sends every frame in order |
 | `internal/server` | one listener per port, TLS, routing by host name + path, WebSocket connections |
 | `internal/certs` | the test CA and the server certificate |

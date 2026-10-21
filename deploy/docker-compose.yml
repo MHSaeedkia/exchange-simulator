@@ -38,6 +38,7 @@ services:
           - ${OKX_WS_HOST:-ws.okx.com}
           - ${OKX_REST_HOST:-www.okx.com}
           - ${NOBITEX_WS_HOST:-ws.nobitex.ir}
+          - ${BITPIN_WS_HOST:-centrifugo.bitpin.ir}
 
 networks:
   lpa:

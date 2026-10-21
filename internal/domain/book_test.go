@@ -26,6 +26,12 @@ func TestParseDecimal(t *testing.T) {
 	}
 }
 
+func TestDecimalStringKeepsTheScale(t *testing.T) {
+	assert.Equal(t, "62770.10", Decimal{Units: 6277010, Scale: 2}.String())
+	assert.Equal(t, "0.00000001", Decimal{Units: 1, Scale: 8}.String())
+	assert.Equal(t, "5", Decimal{Units: 5}.String())
+}
+
 func TestFormat(t *testing.T) {
 	assert.Equal(t, "62770", format(627700, 1, true))
 	assert.Equal(t, "62770.5", format(627705, 1, true))

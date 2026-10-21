@@ -66,7 +66,7 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Endpoint{Host: "www.okx.com", Port: 443, Path: "/api/v5/market/books"}, okx.REST)
 	assert.True(t, okx.HasREST)
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
-	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir"}, cfg.Hosts())
+	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir"}, cfg.Hosts())
 
 	nobitex, ok := cfg.Exchange("nobitex")
 	require.True(t, ok)
@@ -76,6 +76,14 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, 24, nobitex.Defaults.BookDepth, "real nobitex sends 24 levels per side")
 	assert.Equal(t, int64(1), nobitex.SeqStepMin, "a Centrifugo offset moves by one")
 	assert.Equal(t, int64(1), nobitex.SeqStepMax)
+
+	bitpin, ok := cfg.Exchange("bitpin")
+	require.True(t, ok)
+	assert.Equal(t, int64(2), bitpin.ID)
+	assert.Equal(t, domain.Endpoint{Host: "centrifugo.bitpin.ir", Port: 443, Path: "/connection/websocket"}, bitpin.WS, "the REAL address")
+	assert.False(t, bitpin.HasREST, "NiFi's BITPIN group makes no REST call")
+	assert.Equal(t, 50, bitpin.Defaults.BookDepth, "real bitpin sends 50 levels per side")
+	assert.Equal(t, int64(1), bitpin.SeqStepMax, "a Centrifugo offset moves by one")
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {

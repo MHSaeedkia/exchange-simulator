@@ -16,7 +16,7 @@
 
 - [x] **okx (8)** — flow read (facts in [[exchange-protocols]]); matches what step 1 built; the proxy it needs is built (step 1b)
 - [x] nobitex (1) — built with unit tests; live check waits for the end (see below)
-- [ ] bitpin (2)
+- [x] bitpin (2) — built with unit tests on the shared `centrifugo` package; live check at the end
 - [ ] wallex (3) — server PING every 20 s, cuts at 30 min, 51-subscribe limit: decide which of these to copy
 - [ ] ramzinex (4)
 - [ ] bitget (5)
