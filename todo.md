@@ -21,7 +21,7 @@
 - [x] wallex (3) — all real rules copied (user: exactly as real): open message, no replies, 51 subscribes per connection, PING 20 s / close after 30 s without PONG, close at 30 min; live check at the end
 - [x] ramzinex (4) — WS + REST, its Centrifugo differences; the 3012 no-pong close added to all Centrifugo exchanges; live check at the end
 - [x] bitget (5) — books50, real replies, the 2-min no-ping cut (NiFi gets cut, as on real bitget); live check at the end
-- [ ] bybit (6)
+- [x] bybit (6) — WS + REST (through the proxy), real replies and the 10-arg rule; live check at the end. OPEN: does real bybit cut a client that never pings? (probe running)
 - [ ] ompfinex (7)
 - [ ] lbank (9)
 

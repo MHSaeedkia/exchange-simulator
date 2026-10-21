@@ -196,6 +196,15 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.01", qtyMin: "0.000001", qtyMax: "0.600000",
 		seqStart: "941000000000", seqStepMin: "2000", seqStepMax: "12000", // a sampled book counter: steps of thousands
 	},
+	{
+		name: "bybit", id: "6",
+		wsHost: "stream.bybit.com", wsPort: "443", wsPath: "/v5/public/spot",
+		// NiFi calls the REST order book through its proxy (the simulator's proxy in a test).
+		restHost: "api.bybit.com", restPort: "443", restPath: "/v5/market/orderbook",
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // orderbook.50: snapshot, then deltas
+		basePrice: "84000", priceStep: "0.1", qtyMin: "0.000001", qtyMax: "0.900000",
+		seqStart: "346400000", seqStepMin: "1", seqStepMax: "1", // u moves by exactly one
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

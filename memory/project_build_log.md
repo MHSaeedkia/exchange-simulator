@@ -157,3 +157,14 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
   to one new subscriber at the current seq would repeat a seq other subscribers already saw.
 - Replies built with a non-HTML-escaping JSON encoder (bitget's error msg echoes raw text).
 - Verified: `go test -race ./...` green (server tests for the idle cut and ping keeping it open). NOT live.
+
+# Step 7 — bybit (2026-10-21)
+
+- `Connector` for the per-connection conn_id and subscribed topics (a repeat is silent).
+- One ack per message, sent before the first new topic's snapshot (ack func on the first
+  Subscribe only); snapshot=true (real bybit sends it right after the ack).
+- `seq` derived from u: seqBase + 17u + fnv(u)%13 (rises 5…29 per u, as real 4…30).
+  REST `u` = WS u / 5 (a different, smaller counter, as real; nobody reads it).
+- OPEN when committed: whether real bybit cuts a client that never pings (NiFi never does);
+  an 11-min probe was still running with no cut.
+- Verified: `go test -race ./...` green. NOT live.

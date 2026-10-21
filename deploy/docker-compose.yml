@@ -43,6 +43,8 @@ services:
           - ${RAMZINEX_WS_HOST:-websocket.ramzinex.com}
           - ${RAMZINEX_REST_HOST:-publicapi.ramzinex.com}
           - ${BITGET_WS_HOST:-ws.bitget.com}
+          - ${BYBIT_WS_HOST:-stream.bybit.com}
+          - ${BYBIT_REST_HOST:-api.bybit.com}
 
 networks:
   lpa:

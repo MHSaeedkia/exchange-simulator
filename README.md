@@ -13,8 +13,8 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5).
-The others are added one by one: bybit (6), ompfinex (7), lbank (9).
+**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5),
+bybit (6). The others are added one by one: ompfinex (7), lbank (9).
 
 ## Run it
 
@@ -129,6 +129,24 @@ REST: `GET https://publicapi.ramzinex.com/exchange/api/v1.0/exchange/orderbooks/
 Every frame is the whole book: `{"action":"snapshot","arg":{…},"data":[{"asks":[…],"bids":[…],"ts":"…","seq":N,"pseq":0}],"ts":…}`;
 `seq` moves by thousands (`BITGET_SEQ_STEP_MIN`…`MAX`).
 
+### bybit (6)
+
+`wss://stream.bybit.com/v5/public/spot`, topic `orderbook.50.BTCUSDT`; REST
+`https://api.bybit.com/v5/market/orderbook` (NiFi calls it through its proxy).
+
+| Client sends | Fake answers |
+|---|---|
+| `{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}` | `{"success":true,"ret_msg":"subscribe","conn_id":…,"op":"subscribe"}`, then a snapshot, then deltas |
+| the same topic again on one connection | nothing |
+| more than 10 args | `{"success":false,"ret_msg":"args size \u003e10",…}`, nothing subscribed |
+| `{"op":"unsubscribe",…}` | `{"success":true,"ret_msg":"unsubscribe",…}`; that market stops |
+| `{"op":"ping"}` | `{"success":true,"ret_msg":"pong",…,"op":"ping"}` |
+| not JSON (even `ping`) | `{"type":"error","ret_code":"400","ret_msg":"Invalid JSON!"}` |
+| `GET …/v5/market/orderbook?category=spot&symbol=BTCUSDT&limit=50` | `{"retCode":0,"retMsg":"OK","result":{s,a,b,ts,u,seq,cts},"retExtInfo":{},"time":…}` |
+
+Frames: `{"topic":…,"ts":…,"type":"snapshot"|"delta","data":{"s":…,"b":[…],"a":[…],"u":N,"seq":M},"cts":…}`;
+a delta has only the changed levels, an unchanged side is `[]`.
+
 ### wallex (3)
 
 `wss://api.wallex.ir/ws`. No REST. Copies real wallex exactly:
@@ -192,6 +210,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/domain` | the book, settings, counters, endpoints |
 | `internal/exchange` | the contract every exchange implements |
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
+| `internal/exchange/bybit` | bybit: orderbook.50 frames, replies, REST order book |
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
 | `internal/exchange/nobitex` | nobitex: its book frame |
 | `internal/exchange/bitget` | bitget: books50 frames, replies, the idle cut |

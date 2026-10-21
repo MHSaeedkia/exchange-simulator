@@ -43,7 +43,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 3 | wallex | WS only; each frame = full snapshot of ONE side | `wss://api.wallex.ir/ws` | `BTCUSDT` (`BTCUSDT@buyDepth` / `@sellDepth`) | none (null) | none (processing time) |
 | 4 | ramzinex | WS Centrifugo, full snapshot both sides (+ a REST branch NiFi never uses today) | `wss://websocket.ramzinex.com/websocket` | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
 | 5 | bitget | WS `books50`, snapshot only | `wss://ws.bitget.com/v2/ws/public` | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
-| 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` | WS `wss://stream.bybit.com/v5/public/spot` *(measured directly, NiFi use inferred)* | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
+| 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` (through the proxy) | WS `wss://stream.bybit.com/v5/public/spot`, REST `https://api.bybit.com` | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
 | 7 | ompfinex | REST snapshot + Centrifugo WS delta (NO captures, shapes from the parser only) | NOT KNOWN | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
 | 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST `https://www.okx.com/api/v5/market/books` — both through the proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
 | 9 | lbank | WS `fdepth`, snapshot only | NOT KNOWN | `btc_usdt` (lower case, underscore) | none (null) | `TS` ISO without zone, read as UTC |
@@ -55,7 +55,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - **wallex (3)**: built in step 4 — see § wallex below. First frame `{"sid":…,"upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Built in step 5 — see § ramzinex below.
 - **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Built in step 6 — see § bitget below.
-- **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Subscribe `{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}` *(inferred)*.
+- **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Built in step 7 — see § bybit below.
 - **ompfinex (7)**: REST `{"status":"OK","action":"snapshot","pair":"14","data":{"lastUpdateId":N,"time":µs,"bids","asks"}}`; WS `data.U`, `data.u`, `a`, `b`, qty `"0"` = delete. Subscribe NOT KNOWN.
 - **okx (8)**: built in step 1 (from the okx-only version). Subscribe/unsubscribe `{"op":"subscribe|unsubscribe","args":[{"channel":"books","instId":"BTC-USDT"}]}`; ack `{"event":"subscribe","arg":{…},"connId":…}`; errors 60012 / 60018; text `ping` → `pong`. Frame `{"arg":{…},"action":"snapshot|update","data":[{asks,bids,ts,checksum,prevSeqId,seqId}]}`, 4-element levels, 400 levels on a snapshot. REST `{"code":"0","msg":"","data":[{asks,bids,ts,seqId}]}`.
 - **lbank (9)**: `{"depth":{asks,bids},"SERVER":"V3","count":200,"limit":50,"type":"fdepth","pair":"btc_usdt","TS":"2026-08-25T17:46:51.723"}`. Ping `{"action":"ping","ping":"…"}` and sub-ack `{"status":"success","pair":"btc_usdt"}` exist only as hand-made test fixtures. Subscribe NOT KNOWN.
@@ -228,3 +228,25 @@ RamzinexParser has no REST branch (such a body would be dropped).
   ping at 60 s (205 s). Modelled as: limit 120 s, checked every 30 s from a random phase.
   **Consequence: real bitget cuts NiFi's connection about every 2 minutes** (NiFi never pings);
   NiFi reconnects and resubscribes.
+
+### bybit (6) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `BYBIT`):** subscribe **`{"op":"${status:replace('pending-', '')}","args": ["orderbook.50.${market}"]}`**
+(space after `"args":`). **NiFi sends no ping.** On `disconnected`: rows → `pending-subscribe`.
+`snapshot_request` → InvokeHTTP **through the proxy** `GET https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${pair}&limit=50`
+→ Jolt `default` action/pair → ex6-raw. WS direct (DNS alias).
+
+**Real bybit (probed from a dev Mac):**
+- ONE ack per subscribe message `{"success":true,"ret_msg":"subscribe","conn_id":"<20 a-z0-9>-<5>","op":"subscribe"}`
+  (`req_id` echoed before `op`), then the snapshot at once. **Repeat subscribe → no reply at all.**
+  Unsubscribe (even not subscribed) → `{"success":true,"ret_msg":"unsubscribe",…}`.
+- `>10 args` → `"ret_msg":"args size \u003e10"` (Go-style escaping); `[]` → `"args required!"`;
+  `orderbook.77.X` → `"Invalid topic :[orderbook.77.BTCUSDT]"`; unknown symbol → `"Invalid symbol :[…]"`
+  (not copied); not-JSON incl. `ping` → `{"type":"error","ret_code":"400","ret_msg":"Invalid JSON!"}`;
+  `{"op":"ping"}` → `{"success":true,"ret_msg":"pong","conn_id":…,"op":"ping"}`; `{"op":"login"}` → no reply.
+- ~40 frames/s on BTCUSDT; `u` +1 exactly; `seq` +4…30 (shared across topics); `ts` = `cts` + 1…8 ms;
+  delta ≈ 4.6 bids + 6 asks, one side often `[]`, with deletes (qty `"0"`) and new levels.
+- REST: `{"retCode":0,"retMsg":"OK","result":{"s","a","b","ts","u","seq","cts"},"retExtInfo":{},"time":…}`;
+  default limit 1; errors are HTTP 200 + `retCode` 10001 + `"result":{}`: `Illegal category`,
+  `Parameter symbol [string] missing!`, `Not supported symbols`. `result.u` is another stream's
+  counter (smaller); `result.seq` is the same counter as the WS `seq`.

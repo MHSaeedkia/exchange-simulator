@@ -67,7 +67,8 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.True(t, okx.HasREST)
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
 	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir", "api.wallex.ir",
-		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com"}, cfg.Hosts())
+		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com",
+		"stream.bybit.com", "api.bybit.com"}, cfg.Hosts())
 
 	nobitex, ok := cfg.Exchange("nobitex")
 	require.True(t, ok)
@@ -110,6 +111,14 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, 50, bitget.Defaults.BookDepth, "books50")
 	assert.Equal(t, int64(2000), bitget.SeqStepMin, "seq steps by thousands (2816…11122 seen)")
 	assert.Equal(t, int64(12000), bitget.SeqStepMax)
+
+	bybit, ok := cfg.Exchange("bybit")
+	require.True(t, ok)
+	assert.Equal(t, int64(6), bybit.ID)
+	assert.Equal(t, domain.Endpoint{Host: "stream.bybit.com", Port: 443, Path: "/v5/public/spot"}, bybit.WS, "the REAL address")
+	assert.Equal(t, domain.Endpoint{Host: "api.bybit.com", Port: 443, Path: "/v5/market/orderbook"}, bybit.REST, "NiFi's snapshot branch, through the proxy")
+	assert.Equal(t, 50, bybit.Defaults.BookDepth, "orderbook.50")
+	assert.Equal(t, int64(1), bybit.SeqStepMax, "u moves by exactly one")
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {
