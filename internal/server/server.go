@@ -48,18 +48,21 @@ type Options struct {
 	SendBuffer   int           // frames queued per connection before sending blocks
 	WriteTimeout time.Duration // a connection that cannot take a frame in this time is closed
 	TLS          *tls.Config   // nil = plain ws:// and http://
+	ProxyPort    int           // the HTTP proxy NiFi's proxied calls are pointed at; 0 = none
 }
 
 // Server routes requests to exchanges.
 type Server struct {
-	opts     Options
-	log      *slog.Logger
-	upgrader websocket.Upgrader
-	handlers map[string]http.HandlerFunc // host + path → handler
-	ports    []int
-	conns    map[string]*atomic.Int64 // exchange name → open WebSocket connections
-	mu       sync.Mutex
-	servers  []*http.Server
+	opts      Options
+	log       *slog.Logger
+	upgrader  websocket.Upgrader
+	handlers  map[string]http.HandlerFunc // host + path → handler
+	ports     []int
+	tunnels   map[string]bool          // host:port the proxy may tunnel to
+	listeners map[int]*portListener    // filled by Listen
+	conns     map[string]*atomic.Int64 // exchange name → open WebSocket connections
+	mu        sync.Mutex
+	servers   []*http.Server
 }
 
 // New checks that no two exchanges claim the same host + path.
@@ -67,9 +70,11 @@ func New(routes []Route, opts Options, log *slog.Logger) (*Server, error) {
 	s := &Server{
 		opts: opts, log: log,
 		// NiFi is not a browser; any origin is fine on a test tool.
-		upgrader: websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
-		handlers: map[string]http.HandlerFunc{},
-		conns:    map[string]*atomic.Int64{},
+		upgrader:  websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }},
+		handlers:  map[string]http.HandlerFunc{},
+		tunnels:   map[string]bool{},
+		listeners: map[int]*portListener{},
+		conns:     map[string]*atomic.Int64{},
 	}
 	ports := map[int]bool{}
 	add := func(e domain.Endpoint, h http.HandlerFunc, owner string) error {
@@ -78,6 +83,7 @@ func New(routes []Route, opts Options, log *slog.Logger) (*Server, error) {
 			return fmt.Errorf("%s: %s%s is already served by another exchange", owner, e.Host, e.Path)
 		}
 		s.handlers[k] = h
+		s.tunnels[tunnelKey(e.Host, e.Port)] = true
 		ports[e.Port] = true
 		return nil
 	}
@@ -128,28 +134,44 @@ func (s *Server) Connections(exchange string) int {
 	return 0
 }
 
-// Listen opens one listener per port and serves until Shutdown.
+// Listen opens one listener per port, and the proxy when ProxyPort is set, and serves
+// until Shutdown.
 func (s *Server) Listen() error {
 	for _, port := range s.ports {
 		addr := net.JoinHostPort(s.opts.ListenHost, strconv.Itoa(port))
-		ln, err := net.Listen("tcp", addr)
+		tcp, err := net.Listen("tcp", addr)
 		if err != nil {
 			return fmt.Errorf("listen %s: %w", addr, err)
 		}
+		pl := newPortListener(tcp)
+		s.listeners[port] = pl
+		var ln net.Listener = pl
 		if s.opts.TLS != nil {
 			ln = tls.NewListener(ln, s.opts.TLS)
 		}
-		srv := &http.Server{Handler: s.Handler(), ReadHeaderTimeout: 10 * time.Second}
-		s.mu.Lock()
-		s.servers = append(s.servers, srv)
-		s.mu.Unlock()
-		go func() {
-			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				s.log.Error("listener stopped", "addr", addr, "err", err)
-			}
-		}()
+		s.serve(ln, s.Handler(), addr)
+	}
+	if s.opts.ProxyPort > 0 {
+		addr := net.JoinHostPort(s.opts.ListenHost, strconv.Itoa(s.opts.ProxyPort))
+		ln, err := net.Listen("tcp", addr)
+		if err != nil {
+			return fmt.Errorf("listen %s (proxy): %w", addr, err)
+		}
+		s.serve(ln, s.proxy(), addr)
 	}
 	return nil
+}
+
+func (s *Server) serve(ln net.Listener, h http.Handler, addr string) {
+	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	s.mu.Lock()
+	s.servers = append(s.servers, srv)
+	s.mu.Unlock()
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			s.log.Error("listener stopped", "addr", addr, "err", err)
+		}
+	}()
 }
 
 // Shutdown stops the listeners. Open WebSockets are hijacked and end with the process.

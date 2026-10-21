@@ -28,10 +28,15 @@ metadata:
 - **kafka mode kept** for all 9 (writes `ex{id}-raw` with what NiFi adds).
 - **Step by step.** Step 1 = project + shared core + okx + TLS/redirect. Then one exchange per
   step; the user checks each before the next.
-- **How an exchange step goes:** the user sends that exchange's NiFi processor group export,
-  one at a time. Read it, write the needed facts into [[exchange-protocols]], ask about
+- **Where the NiFi flow comes from (user, 2026-10-21):** read it yourself from the sibling
+  repo `../NIFI-Version-Controller` (NiFi's version control, file
+  `default/Data-Collection.json`, one big versioned flow). The user no longer sends exports.
+  `git pull`/`git log` there first — it changes. The live groups are under
+  `Data Ingestion Public`; `Data Ingestion Private` is an all-disabled old copy. The file holds
+  real parameter values (e.g. the proxy address): never copy those into this repo or memory.
+- **How an exchange step goes:** read that exchange's group in the flow. Read it, write the needed facts into [[exchange-protocols]], ask about
   anything unclear BEFORE writing code, then build (tests first), live check, update memory +
-  `todo.md`, commit. The raw export files are NOT committed unless the user says so.
+  `todo.md`, commit. Nothing from the flow file is committed unless the user says so.
 - Runs **in Docker beside NiFi**.
 - lpa-core's `feat/load-generator` branch is kept; `Tibobit/crypto-mock-generator` (an older,
   Kafka-only mock with templates for 8 exchanges) is NOT touched and NOT replaced.

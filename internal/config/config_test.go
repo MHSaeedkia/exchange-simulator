@@ -13,7 +13,7 @@ import (
 )
 
 var globalKeys = []string{"OUTPUT_MODE", "EXCHANGES_RUNNING", "LISTEN_HOST", "TLS_ENABLED", "TLS_CA_CERT",
-	"TLS_CA_KEY", "TLS_CERT", "TLS_KEY", "WS_SEND_BUFFER", "WS_WRITE_TIMEOUT_MS", "KAFKA_BROKERS",
+	"TLS_CA_KEY", "TLS_CERT", "TLS_KEY", "PROXY_PORT", "WS_SEND_BUFFER", "WS_WRITE_TIMEOUT_MS", "KAFKA_BROKERS",
 	"KAFKA_TOPIC", "SIMULATION", "DATABASE_URL", "MARKET_STATUS", "DB_REFRESH_MS", "TICK_MS", "API_ADDR",
 	"PROMETHEUS_URL", "PROM_QUERIES_FILE", "DOCKER_HOST", "MONITOR_CONTAINERS", "SAMPLE_INTERVAL_MS", "REPORT_DIR"}
 
@@ -52,6 +52,7 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, []string{"okx"}, cfg.Running)
 	assert.True(t, cfg.TLSEnabled)
 	assert.Equal(t, "certs/ca.crt", cfg.TLSCACert)
+	assert.Equal(t, 2053, cfg.ProxyPort, "the port of NiFi's real proxy: a test changes only its host")
 	assert.Equal(t, "ex8-raw", cfg.Topic(8))
 	assert.Equal(t, time.Millisecond, cfg.Tick)
 	assert.Equal(t, defaultDockerHost, cfg.DockerHost)
@@ -111,11 +112,20 @@ func TestFromEnv_NoneTurnsAListOff(t *testing.T) {
 	assert.Empty(t, cfg.Running, "start with every exchange stopped")
 }
 
+func TestFromEnv_ProxyPortZeroTurnsTheProxyOff(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("PROXY_PORT", "0")
+	cfg, err := FromEnv()
+	require.NoError(t, err)
+	assert.Zero(t, cfg.ProxyPort)
+}
+
 func TestFromEnv_BadValuesFailBeforeAnythingStarts(t *testing.T) {
 	for key, value := range map[string]string{
 		"OUTPUT_MODE":       "udp",
 		"EXCHANGES_RUNNING": "okx,binance",
 		"TLS_ENABLED":       "maybe",
+		"PROXY_PORT":        "70000",
 		"TICK_MS":           "0",
 		"WS_SEND_BUFFER":    "0",
 		"OKX_RECORDS":       "ten",

@@ -21,5 +21,5 @@ WORKDIR /app
 COPY --from=build /exchange-simulator /app/exchange-simulator
 COPY queries.example.txt /app/queries.example.txt
 
-EXPOSE 443 8443 9501
+EXPOSE 443 8443 2053 9501
 ENTRYPOINT ["/app/exchange-simulator"]

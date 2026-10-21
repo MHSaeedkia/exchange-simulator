@@ -1,6 +1,6 @@
 ---
 name: exchange-protocols
-description: Per-exchange fact sheet for the 9 exchanges (feed type, endpoints, subscribe text, frame shape, market key, sequence, what NiFi adds, snapshot answer, limits) — filled in from each NiFi processor-group export; gaps marked
+description: Per-exchange fact sheet for the 9 exchanges (feed type, endpoints, subscribe text, frame shape, market key, sequence, what NiFi adds, snapshot answer, limits) — endpoints/proxy/TLS of all 9 and the okx details read from the NiFi flow repo; other gaps marked
 metadata:
   type: project
 ---
@@ -22,8 +22,19 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - NiFi publishes to `ex{exchange_id}-raw`. Market subscribe/unsubscribe come from lpa-console
   through Postgres `pending-*` rows that a NiFi poller sends into each exchange group.
 - Snapshot requests: see [[snapshot-requests]].
-- **NOT KNOWN for any exchange yet:** how NiFi trusts TLS (SSLContextService or the JVM
-  default), and the okx REST proxy setup.
+- **TLS trust (from the flow, 2026-10-21):** there is NO SSLContextService anywhere in the
+  flow; no JettyWebSocketClient and no InvokeHTTP sets one. So NiFi uses the JVM default
+  truststore (`cacerts`) for every exchange *(the JVM-default part is inferred from how Jetty
+  and OkHttp behave; lpa-core's NiFi image sets no `javax.net.ssl.trustStore`)*.
+- **Proxy (from the flow):** one HTTP proxy, set by the parameters `proxy_server.host` /
+  `proxy_server.port`, is used by: **okx WS + REST, lbank WS + REST, bybit REST**. All other
+  WS and REST calls go direct. A proxied call is NOT caught by our DNS aliases (the proxy
+  resolves the name on its own machine) — see [[redirect]].
+- **Every text frame goes to Kafka**, acks and pongs too (`text message` → LookupAttribute →
+  ReplaceText → port). A non-object frame (`pong`) gets no `id` and the parser drops it.
+- Kafka record = the FlowFile content only: no key, no headers.
+- WS client limits (all groups): Max Text Message Size **64 kb**, Idle Timeout 0, Connection
+  Attempt Count 10. A frame over 64 kb would make Jetty close the socket *(inferred)*.
 
 | # | exchange | feed | known endpoint | market key (DB) | sequence | event time |
 |---|---|---|---|---|---|---|
@@ -34,7 +45,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 5 | bitget | WS `books50`, snapshot only | NOT KNOWN | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
 | 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` | WS `wss://stream.bybit.com/v5/public/spot` *(measured directly, NiFi use inferred)* | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
 | 7 | ompfinex | REST snapshot + Centrifugo WS delta (NO captures, shapes from the parser only) | NOT KNOWN | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
-| 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST path `/api/v5/market/books` *(inferred)* through a proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
+| 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST `https://www.okx.com/api/v5/market/books` — both through the proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
 | 9 | lbank | WS `fdepth`, snapshot only | NOT KNOWN | `btc_usdt` (lower case, underscore) | none (null) | `TS` ISO without zone, read as UTC |
 
 ## Per exchange — details
@@ -51,4 +62,43 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 
 ## Filled in from NiFi exports
 
-(One section per exchange, added as each export is read.)
+Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
+`Data Ingestion Public/<EXCHANGE>`. Parameter values are in the `CONFIG` parameter context.
+
+**Endpoints of all 9 (parameters, 2026-10-21)** — WS URL / REST call / proxy:
+
+| # | WS | REST call (InvokeHTTP, snapshot requests only) | proxy |
+|---|---|---|---|
+| 1 nobitex | `wss://ws.nobitex.ir/connection/websocket` | none in the live group | no |
+| 2 bitpin | `wss://centrifugo.bitpin.ir/connection/websocket` | none in the live group | no |
+| 3 wallex | `wss://api.wallex.ir/ws` | none | no |
+| 4 ramzinex | `wss://websocket.ramzinex.com/websocket` | `https://publicapi.ramzinex.com/exchange/api/v1.0/exchange/orderbooks/${pair}/buys_sells` | no |
+| 5 bitget | `wss://ws.bitget.com/v2/ws/public` | none in the live group | no |
+| 6 bybit | `wss://stream.bybit.com/v5/public/spot` | `https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${pair}&limit=50` | REST only |
+| 7 ompfinex | `wss://stream.ompfinex.com/stream` | `https://api.ompfinex.com/v1/market/${pair}/depth?limit=50` | no |
+| 8 okx | `wss://ws.okx.com:8443/ws/v5/public` | `https://www.okx.com/api/v5/market/books?instId=${pair}&sz=100` | WS + REST |
+| 9 lbank | `wss://www.lbank.com/old-wss/ccws/ws/V3` | `https://api.lbkex.com/v2/depth.do?symbol=${pair}&size=50` | WS + REST |
+
+(`Data Ingestion Private` is an older copy with every processor DISABLED — ignore it.)
+
+### okx (8) — read from the flow 2026-10-21
+
+- **Subscribe / unsubscribe** (ReplaceText, pretty-printed JSON with newlines):
+  `{"op": "${status:replace('pending-', '')}", "args": [{"channel": "books", "instId": "${market}"}]}`
+  — one market per message. Sent by PutWebSocket only while Redis `OKX.conn.state` =
+  `CONNECTED`; on PutWebSocket success, PutSQL sets the row to `subscribe` / `unsubscribe`.
+  **NiFi never reads the ack** (it only goes to Kafka with the data).
+- **On every `connected`**: session id → Redis, state `CONNECTED`, then
+  `UPDATE exchange_markets SET status='pending-subscribe' WHERE status='subscribe' AND
+  exchange = OKX` → the poller (every 2 s) re-sends every subscribe. So a closed socket heals
+  itself: NiFi reconnects and resubscribes all markets.
+- **No ping/pong flow** in the okx group (NiFi never sends `ping`).
+- **Data path**: `text message` → LookupAttribute (`exchange_id`) → ReplaceText `^\s*\{` →
+  `{"id":"${uuid}","simulation":0,` → UpdateAttribute (`kafak_topic_raw_data=ex${exchange_id}-raw`,
+  attributes only) → PublishKafka (transactions on, 1 task). OldestFlowFileFirst on the hops.
+- **Snapshot request** (`action == snapshot_request` from the controller group) → InvokeHTTP
+  GET `#{okx.api_url}/api/v5/market/books?instId=${pair}&sz=#{okx.depth_limit}` (= `sz=100`),
+  **through the proxy**, 4 tasks, no SSL service → JoltTransformJSON `default`
+  `{"action":"snapshot","pair":"${pair}"}` (added at the end) → same LookupAttribute/ReplaceText
+  path → ex8-raw.
+- TLS: JVM default truststore (see Common). Proxy: WS AND REST (see Common).

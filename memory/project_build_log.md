@@ -53,3 +53,11 @@ had one commit) and reshaped for many exchanges. See [[origin]] for the inherite
 
 - kafka mode in this layout (Docker was down) — the okx-only version ran it with 0 rejects.
 - Anything with NiFi; the docker network alias; the Docker image build.
+
+# Step 1b — HTTP proxy for NiFi's proxied calls (2026-10-21)
+
+The NiFi flow showed okx WS + REST go through an HTTP proxy that DNS cannot catch. Built
+`internal/server/proxy.go` + `PROXY_PORT` (0 = off). Why and how: [[redirect]] § The proxy.
+`docs/REDIRECT.md` steps 3 (JVM `cacerts`, from the flow) and 5 (change `proxy_server.host`)
+rewritten. Verified: `go test -race ./...` green, live check as in [[redirect]]. NOT verified:
+anything with NiFi.

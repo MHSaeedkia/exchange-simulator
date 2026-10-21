@@ -55,6 +55,7 @@ type Config struct {
 	TLSCAKey       string
 	TLSCert        string
 	TLSKey         string
+	ProxyPort      int // the HTTP proxy NiFi's proxied calls are pointed at during a test; 0 = none
 	WSSendBuffer   int // frames queued per connection before sending blocks
 	WSWriteTimeout time.Duration
 
@@ -114,6 +115,7 @@ const (
 	defaultTLSCAKey          = "certs/ca.key"
 	defaultTLSCert           = "certs/server.crt"
 	defaultTLSKey            = "certs/server.key"
+	defaultProxyPort         = "2053" // the port of NiFi's real proxy, so a test changes only its host
 	defaultWSSendBuffer      = "10000"
 	defaultWSWriteTimeoutMS  = "10000"
 	defaultKafkaBrokers      = "localhost:9092"
@@ -175,6 +177,7 @@ func FromEnv() (Config, error) {
 		TLSCAKey:       env("TLS_CA_KEY", defaultTLSCAKey),
 		TLSCert:        env("TLS_CERT", defaultTLSCert),
 		TLSKey:         env("TLS_KEY", defaultTLSKey),
+		ProxyPort:      int(p.int("PROXY_PORT", defaultProxyPort)),
 		WSSendBuffer:   int(p.int("WS_SEND_BUFFER", defaultWSSendBuffer)),
 		WSWriteTimeout: p.ms("WS_WRITE_TIMEOUT_MS", defaultWSWriteTimeoutMS),
 
@@ -250,6 +253,8 @@ func (c Config) validate() error {
 		return fmt.Errorf("kafka mode needs KAFKA_BROKERS")
 	case c.WSSendBuffer < 1:
 		return fmt.Errorf("WS_SEND_BUFFER must be at least 1")
+	case c.ProxyPort < 0 || c.ProxyPort > 65535:
+		return fmt.Errorf("PROXY_PORT must be 0 (no proxy) or 1…65535")
 	}
 	for _, name := range c.Running {
 		if _, ok := c.Exchange(name); !ok {

@@ -1,19 +1,22 @@
 # Redirect: NiFi talks to the simulator, not to the real exchanges
 
-NiFi keeps its real URLs (for example `wss://ws.okx.com:8443/ws/v5/public`). Two things
+NiFi keeps its real URLs (for example `wss://ws.okx.com:8443/ws/v5/public`). Three things
 make those calls reach the simulator instead:
 
 1. **DNS.** Inside lpa-core's docker network, the exchange host names point to the
-   simulator's container.
-2. **TLS.** The simulator shows a certificate for those names. It is signed by our own
+   simulator's container. This catches the calls NiFi makes directly.
+2. **Proxy.** Some calls go through an HTTP proxy (okx WebSocket and REST, lbank, bybit
+   REST). For a test, NiFi's proxy parameter points to the simulator, which acts as that
+   proxy.
+3. **TLS.** The simulator shows a certificate for those names. It is signed by our own
    test CA, and NiFi trusts that CA.
 
-NiFi's flows do not change. lpa-console subscribes markets as usual.
+NiFi's flows do not change. Only one NiFi parameter changes during a test (step 5).
+lpa-console subscribes markets as usual.
 
-> ⚠ **Status (2026-10-21): written, NOT yet run against NiFi.** Two parts are still open:
-> where NiFi keeps its trusted CAs (step 3), and how the okx REST proxy is set up (step 5).
-> Both will be settled from the NiFi processor-group exports. The DNS step (network alias)
-> and the CA step were checked only with a test client, not with NiFi.
+> ⚠ **Status (2026-10-21): written, NOT yet run against NiFi.** Steps 3 and 5 come from
+> reading the NiFi flow (`NIFI-Version-Controller`). The DNS, proxy and CA steps were
+> checked only with test clients (Go, curl), not with NiFi.
 
 ## While the redirect is on
 
@@ -21,6 +24,8 @@ NiFi's flows do not change. lpa-console subscribes markets as usual.
   real exchange behind that name.
 - A **stopped** exchange in the simulator is **silent**. It keeps the connection and answers
   subscribe and ping, but sends no market data.
+- While NiFi's proxy points to the simulator, a proxied call for a host the simulator does
+  not play yet (for example lbank) is **refused**. It is not sent to the real proxy.
 - Stop the real exchange feeds you do not want to mix with test data.
 
 ## Steps
@@ -57,24 +62,21 @@ docker exec nifi getent hosts ws.okx.com      # must print the simulator's addre
 
 ### 3. Make NiFi trust the test CA
 
-**Which way applies is not known yet** — it comes from the NiFi exports.
+The NiFi flow has no SSL Context Service (not on the WebSocket clients, not on InvokeHTTP),
+so NiFi uses Java's default truststore, `cacerts`:
 
-- **NiFi uses Java's default truststore** (no SSL Context Service on the WebSocket client
-  or on InvokeHTTP):
+```sh
+docker cp certs/ca.crt nifi:/tmp/exchange-simulator-ca.crt
+docker exec -u root nifi keytool -importcert -noprompt -cacerts -storepass changeit \
+    -alias exchange-simulator-ca -file /tmp/exchange-simulator-ca.crt
+docker restart nifi
+```
 
-  ```sh
-  docker cp certs/ca.crt nifi:/tmp/exchange-simulator-ca.crt
-  docker exec -u root nifi keytool -importcert -noprompt -cacerts -storepass changeit \
-      -alias exchange-simulator-ca -file /tmp/exchange-simulator-ca.crt
-  docker restart nifi
-  ```
+⚠ This change lives in the container, not in the image: a recreated NiFi container
+loses it, and the step must be done again.
 
-  ⚠ This change lives in the container, not in the image: a recreated NiFi container
-  loses it, and the step must be done again.
-
-- **NiFi uses an SSL Context Service with its own truststore file:** import the same file
-  into that truststore (`keytool -importcert -keystore <truststore> -storepass <password>
-  -alias exchange-simulator-ca -file ca.crt`), then disable and enable the service.
+If someone later adds an SSL Context Service with its own truststore file, import the same
+`ca.crt` into that truststore instead, then disable and enable the service.
 
 ### 4. Make NiFi connect again
 
@@ -84,11 +86,24 @@ start the exchange groups' `ConnectWebSocket` processors.
 ⚠ **Use Stop, never Terminate** on `ConnectWebSocket`: after a Terminate it keeps a broken
 session factory until NiFi restarts (see `memory/project_nifi_wallex_ws.md`).
 
-### 5. REST calls through a proxy (okx)
+### 5. Point NiFi's proxy to the simulator
 
-okx's REST snapshot goes through an HTTP proxy, because `www.okx.com` is blocked from the
-server. A proxy on another machine looks up `www.okx.com` itself, so the DNS step does not
-catch it. **How this is solved depends on the proxy setup in the okx export — open.**
+These calls go through one HTTP proxy (NiFi parameters `proxy_server.host` and
+`proxy_server.port`): okx WebSocket and REST, lbank WebSocket and REST, bybit REST. That
+proxy is on another machine and looks the host name up itself, so step 2 does not catch
+them.
+
+The simulator is also an HTTP proxy, on the **same port** as the real one (`PROXY_PORT`).
+So for a test, change only the host:
+
+1. In NiFi, open the parameter context `CONFIG`. **Write down the current value of
+   `proxy_server.host`.**
+2. Set `proxy_server.host` to `exchange-simulator` (the container name). Leave
+   `proxy_server.port` as it is. NiFi restarts the processors and services that use it.
+
+The simulator tunnels a `CONNECT` for a host and port it plays (for example
+`ws.okx.com:8443`) to its own fake exchange. It refuses every other host, and the
+simulator's log says `proxy refused a host the simulator does not play` for each one.
 
 ### 6. Check
 
@@ -101,9 +116,10 @@ up, and its books must show in orderbook-viewer.
 
 ## Undo
 
-1. `docker compose -f deploy/docker-compose.yml down` — the aliases go with the container,
+1. In NiFi, set `proxy_server.host` back to the value you wrote down in step 5.
+2. `docker compose -f deploy/docker-compose.yml down` — the aliases go with the container,
    so the names resolve to the real exchanges again.
-2. Stop and start NiFi's `ConnectWebSocket` processors (after ~30 s for the DNS cache).
-3. Optional: remove the CA from NiFi
+3. Stop and start NiFi's `ConnectWebSocket` processors (after ~30 s for the DNS cache).
+4. Optional: remove the CA from NiFi
    (`keytool -delete -cacerts -storepass changeit -alias exchange-simulator-ca`, then
    restart NiFi).

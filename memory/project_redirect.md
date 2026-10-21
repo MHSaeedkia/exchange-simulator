@@ -1,6 +1,6 @@
 ---
 name: redirect
-description: How NiFi's real-URL calls reach the simulator (docker network aliases + own test CA), why aliases and not extra_hosts, what is verified and what is still open (NiFi truststore, okx REST proxy)
+description: How NiFi's real-URL calls reach the simulator (docker network aliases + own test CA), why aliases and not extra_hosts, what is verified and what is still open (NiFi uses JVM cacerts; proxied calls — okx, lbank, bybit REST — reach the simulator's own HTTP proxy: a test changes only NiFi's proxy_server.host)
 metadata:
   type: project
 ---
@@ -37,12 +37,35 @@ Procedure for people: `docs/REDIRECT.md`.
 - **The docker alias trick with NiFi** (Docker was down): `docker exec nifi getent hosts
   ws.okx.com` must print the simulator's address. Believed to work (Docker's embedded DNS
   answers aliases on a user-defined network before forwarding) — check it.
-- **Where NiFi keeps trusted CAs** (SSLContextService or Java's cacerts) — from the exports.
-- **okx REST goes through a proxy on another machine**, which resolves `www.okx.com` itself,
-  so DNS does not catch it. Likely fix: the simulator also acts as that proxy — from the okx
-  export.
+- **Trusted CAs — answered from the flow (2026-10-21):** no SSLContextService anywhere, so
+  NiFi uses Java's default `cacerts` (step 3 of REDIRECT.md = keytool into `cacerts`; likely,
+  not yet tried on NiFi). lpa-core's NiFi image keeps `cacerts` in the image, not on a volume,
+  so a recreated `nifi` container loses our CA *(inferred)*.
+- **The proxy — confirmed from the flow, solved by user choice (2026-10-21), see below.**
 - Java caches DNS (~30 s): NiFi's ConnectWebSocket must be stopped/started after switching.
   Never Terminate it ([[project-nifi-wallex-ws]]).
+
+## The proxy (user decision 2026-10-21)
+
+okx WS **and** REST (also lbank WS + REST, bybit REST) go through one HTTP proxy on another
+machine (NiFi parameters `proxy_server.host/port`). It resolves the name itself, so DNS
+aliases never see these calls. Options given: (A) the simulator is also the proxy, (B) empty
+the proxy parameters. **User chose A**, with the extra wish "for a test I change only ONE
+parameter". They first said "only the port" — impossible, the host is the other machine; so:
+**`PROXY_PORT` defaults to the real proxy's port and a test changes only
+`proxy_server.host` → `exchange-simulator`.** User agreed.
+
+- CONNECT to a host:port the simulator serves → the hijacked conn is handed IN PROCESS to
+  that port's listener (`portListener`), so TLS + Host routing run as for a direct call and
+  there is no extra loopback hop on the hot path.
+- Anything else → 403 (plain-http proxying → 405). **Never forwarded to the real proxy**
+  (no pass-through, same rule as "stopped = silent"). So during a test lbank and bybit
+  REST fail until they are simulated; forwarding them upstream would be a later, asked-for step.
+- Verified: unit tests (gorilla WS + net/http through the proxy, refusals) and live with the
+  local binary: WS through the proxy at 1000/s (3000 updates in 3 s, missed 0), NiFi's exact
+  REST URL with curl `-x`, `api.lbkex.com` refused with 403, a client without our CA refused.
+- NOT verified: NiFi's own clients (Jetty WS client, InvokeHTTP/OkHttp) through it; both
+  use plain HTTP CONNECT with no proxy auth in the flow, so they are expected to work.
 
 ## Gotcha
 

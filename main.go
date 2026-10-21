@@ -235,7 +235,7 @@ func makeCerts(cfg config.Config, log *slog.Logger) error {
 // serveExchanges opens the fake exchanges on their real ports, with TLS for the real host
 // names when TLS_ENABLED.
 func serveExchanges(cfg config.Config, sims []*sim, log *slog.Logger) (*server.Server, error) {
-	opts := server.Options{ListenHost: cfg.ListenHost, SendBuffer: cfg.WSSendBuffer, WriteTimeout: cfg.WSWriteTimeout}
+	opts := server.Options{ListenHost: cfg.ListenHost, SendBuffer: cfg.WSSendBuffer, WriteTimeout: cfg.WSWriteTimeout, ProxyPort: cfg.ProxyPort}
 	if cfg.TLSEnabled {
 		if err := makeCerts(cfg, log); err != nil {
 			return nil, err
@@ -257,7 +257,7 @@ func serveExchanges(cfg config.Config, sims []*sim, log *slog.Logger) (*server.S
 	if err := srv.Listen(); err != nil {
 		return nil, err
 	}
-	log.Info("fake exchanges listening", "host", cfg.ListenHost, "ports", srv.Ports(), "tls", cfg.TLSEnabled)
+	log.Info("fake exchanges listening", "host", cfg.ListenHost, "ports", srv.Ports(), "tls", cfg.TLSEnabled, "proxy_port", cfg.ProxyPort)
 	return srv, nil
 }
 

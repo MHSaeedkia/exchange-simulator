@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -265,4 +268,111 @@ func TestTLSWithTheRealHostName(t *testing.T) {
 	plain := websocket.Dialer{NetDialContext: dialer.NetDialContext}
 	_, _, err = plain.Dial(okxWS.URL("wss"), nil)
 	assert.Error(t, err)
+}
+
+// freePort is a port nothing listens on now. Tests that open the real listeners use it,
+// because 443 and 8443 may be taken or need root.
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// proxySetup opens the real listeners for an okx on free ports, with TLS and the proxy, the
+// way NiFi meets them once its proxy parameter names the simulator.
+func proxySetup(t *testing.T) (ws, rest domain.Endpoint, proxyURL *url.URL, roots *x509.CertPool) {
+	t.Helper()
+	ws = domain.Endpoint{Host: okxWS.Host, Port: freePort(t), Path: okxWS.Path}
+	rest = domain.Endpoint{Host: okxREST.Host, Port: freePort(t), Path: okxREST.Path}
+	dir := t.TempDir()
+	files := certs.Files{
+		CACert: filepath.Join(dir, "ca.crt"), CAKey: filepath.Join(dir, "ca.key"),
+		Cert: filepath.Join(dir, "server.crt"), Key: filepath.Join(dir, "server.key"),
+	}
+	_, err := certs.Ensure(files, []string{ws.Host, rest.Host}, time.Now())
+	require.NoError(t, err)
+	tlsCfg, err := certs.TLSConfig(files)
+	require.NoError(t, err)
+	caPEM, err := os.ReadFile(files.CACert)
+	require.NoError(t, err)
+	roots = x509.NewCertPool()
+	require.True(t, roots.AppendCertsFromPEM(caPEM))
+
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := okx.New(okx.Options{ID: 8, WS: ws, REST: rest, StepMin: 1, StepMax: 5})
+	f := feed.New(feed.Options{
+		Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 2},
+		SeqStart: 1000, Tick: time.Millisecond, Running: true, Seed: 1,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+
+	proxyPort := freePort(t)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{
+		ListenHost: "127.0.0.1", SendBuffer: 100, WriteTimeout: time.Second, TLS: tlsCfg, ProxyPort: proxyPort,
+	}, quiet)
+	require.NoError(t, err)
+	require.NoError(t, s.Listen())
+	t.Cleanup(func() { s.Shutdown(context.Background()) })
+	proxyURL, err = url.Parse("http://127.0.0.1:" + strconv.Itoa(proxyPort))
+	require.NoError(t, err)
+	return ws, rest, proxyURL, roots
+}
+
+// NiFi's okx WebSocket goes through an HTTP proxy that names the host itself, so no DNS
+// trick is needed: the CONNECT to ws.okx.com reaches the simulator's own okx, TLS and all.
+func TestProxyTunnelsTheWebSocketToTheSimulator(t *testing.T) {
+	ws, _, proxyURL, roots := proxySetup(t)
+	dialer := websocket.Dialer{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: roots}}
+	c, _, err := dialer.Dial(ws.URL("wss"), nil)
+	require.NoError(t, err)
+	defer c.Close()
+
+	send(t, c, subscribe("subscribe", "BTC-USDT"))
+	assert.Equal(t, "subscribe", next(t, c).Event)
+	assert.Equal(t, "snapshot", next(t, c).Action)
+}
+
+// The snapshot request's REST call (InvokeHTTP) uses the same proxy.
+func TestProxyTunnelsTheRestCallToTheSimulator(t *testing.T) {
+	_, rest, proxyURL, roots := proxySetup(t)
+	client := http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL), TLSClientConfig: &tls.Config{RootCAs: roots}}}
+	resp, err := client.Get(rest.URL("https") + "?instId=BTC-USDT&sz=3")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	var body okx.RestBody
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	assert.Equal(t, "0", body.Code)
+	assert.Len(t, body.Data[0].Asks, 3)
+}
+
+// During a test every proxied call reaches the simulator. One for a host + port it does not
+// play is refused, never sent to the real exchange.
+func TestProxyRefusesWhatTheSimulatorDoesNotPlay(t *testing.T) {
+	ws, rest, proxyURL, _ := proxySetup(t)
+	for _, c := range []struct {
+		request string
+		status  int
+	}{
+		{"CONNECT stream.bybit.com:443 HTTP/1.1\r\nHost: stream.bybit.com:443\r\n\r\n", http.StatusForbidden},
+		// A served host on a port it is not served on.
+		{"CONNECT " + ws.Host + ":" + strconv.Itoa(rest.Port) + " HTTP/1.1\r\nHost: x\r\n\r\n", http.StatusForbidden},
+		// Plain-http proxying: NiFi only tunnels.
+		{"GET http://www.okx.com/ HTTP/1.1\r\nHost: www.okx.com\r\n\r\n", http.StatusMethodNotAllowed},
+	} {
+		conn, err := net.Dial("tcp", proxyURL.Host)
+		require.NoError(t, err)
+		_, err = conn.Write([]byte(c.request))
+		require.NoError(t, err)
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		require.NoError(t, err)
+		resp.Body.Close()
+		conn.Close()
+		assert.Equal(t, c.status, resp.StatusCode, c.request)
+	}
 }

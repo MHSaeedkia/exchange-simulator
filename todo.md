@@ -9,11 +9,12 @@
 - [x] Tests green; live check with a NiFi-like TLS client. See [[build-log]]
 - [ ] Run kafka mode in the new layout against a stack (Docker was down)
 - [ ] Build the Docker image once; run it with `deploy/docker-compose.yml`; check `docker exec nifi getent hosts ws.okx.com`
-- [ ] Run the redirect against NiFi (needs steps 3 and 5 of REDIRECT.md settled)
+- [x] Steps 3 and 5 of REDIRECT.md settled from the NiFi flow: NiFi uses JVM `cacerts`; proxied calls go to the simulator's own HTTP proxy (`PROXY_PORT`, a test changes only `proxy_server.host`)
+- [ ] Run the redirect against NiFi (aliases + CA in `cacerts` + `proxy_server.host` → `exchange-simulator`)
 
-## Exchanges — one step each, from the NiFi processor-group export (read → memory → ask → build)
+## Exchanges — one step each, from the NiFi flow in `../NIFI-Version-Controller` (read → memory → ask → build)
 
-- [ ] **okx (8)** — export still needed for: how NiFi trusts TLS, the REST proxy setup, the real REST URL
+- [x] **okx (8)** — flow read (facts in [[exchange-protocols]]); matches what step 1 built; the proxy it needs is built (step 1b)
 - [ ] nobitex (1)
 - [ ] bitpin (2)
 - [ ] wallex (3) — server PING every 20 s, cuts at 30 min, 51-subscribe limit: decide which of these to copy
@@ -26,6 +27,8 @@
 For each: a block in `config.known` + `.env.example` + an alias line in `deploy/docker-compose.yml`, a package under `internal/exchange/`, a case in `main.newExchange`, tests against `docs/sample-raw-data.md`, a section in [[exchange-protocols]].
 
 ## Later (ask the user first)
+
+- [ ] Proxy: forward hosts the simulator does not play to the real proxy (today they are refused during a test)
 
 - [ ] Mock ordering for the exchanges that support it (place an order → result on the exchange's private WS) — exchanges not chosen yet
 - [ ] kafka mode: answer `snapshot_request` from `control-plane`
