@@ -93,7 +93,7 @@ Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
   WHERE status='subscribe' AND exchange = OKX` → the poller re-sends them once the socket is back.
   On `connected` only the session id and `CONNECTED` go to Redis. **So a FRESH NiFi never
   resubscribes rows that are already `subscribe`** (seen live: okx's 23 rows stayed unsent).
-- **No ping/pong flow** in the okx group (NiFi never sends `ping`).
+- **No ping/pong flow** in the okx group (checked again 2026-10-21, including timer-driven paths).
 - **Data path**: `text message` → LookupAttribute (`exchange_id`) → ReplaceText `^\s*\{` →
   `{"id":"${uuid}","simulation":0,` → UpdateAttribute (`kafak_topic_raw_data=ex${exchange_id}-raw`,
   attributes only) → PublishKafka (transactions on, 1 task). OldestFlowFileFirst on the hops.
@@ -214,7 +214,9 @@ RamzinexParser has no REST branch (such a body would be dropped).
 
 **NiFi side (group `BITGET`):** subscribe/unsubscribe
 **`{"op":"${status:replace('pending-', '')}","args":[{"channel":"books50","instType":"SPOT","instId":"${market}"}]}`**.
-**NiFi sends NO ping** (and drops ≤10-byte frames, i.e. `pong`). On `disconnected`: rows →
+**NiFi sends `ping` every 25 s** (CORRECTED 2026-10-21: a `GenerateFlowFile` 25 s → Wait →
+ReplaceText `ping` → PutWebSocket path, missed at first because the trace only followed paths
+from ConnectWebSocket and the input port), and drops ≤10-byte frames, i.e. the `pong`. On `disconnected`: rows →
 `pending-subscribe`. `snapshot_request` dropped. No REST, no proxy.
 
 **Real bitget (probed from a dev Mac):**
@@ -229,13 +231,14 @@ RamzinexParser has no REST branch (such a body would be dropped).
 - **Idle cut: no `ping` for ~2 min → TCP dropped, no close frame (1006).** Cut at 126 s and
   129.5 s after connect with no ping (a subscribe at 60 s did NOT reset it), and 145 s after a
   ping at 60 s (205 s). Modelled as: limit 120 s, checked every 30 s from a random phase.
-  **Consequence: real bitget cuts NiFi's connection about every 2 minutes** (NiFi never pings);
-  NiFi reconnects and resubscribes.
+  NiFi pings every 25 s, so NiFi is NOT cut (confirmed in the NiFi run: no idle drop).
 
 ### bybit (6) — read from the flow + measured live 2026-10-21
 
 **NiFi side (group `BYBIT`):** subscribe **`{"op":"${status:replace('pending-', '')}","args": ["orderbook.50.${market}"]}`**
-(space after `"args":`). **NiFi sends no ping.** On `disconnected`: rows → `pending-subscribe`.
+(space after `"args":`). **NiFi sends `{"op":"ping","args":[]}` every 15 s** (CORRECTED 2026-10-21:
+a timer-driven GenerateFlowFile path the first trace missed); real bybit answers
+`{"success":true,"ret_msg":"pong","conn_id":…,"op":"ping"}`, as the simulator does. On `disconnected`: rows → `pending-subscribe`.
 `snapshot_request` → InvokeHTTP **through the proxy** `GET https://api.bybit.com/v5/market/orderbook?category=spot&symbol=${pair}&limit=50`
 → Jolt `default` action/pair → ex6-raw. WS direct (DNS alias).
 

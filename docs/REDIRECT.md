@@ -14,9 +14,10 @@ make those calls reach the simulator instead:
 NiFi's flows do not change. Only one NiFi parameter changes during a test (step 5).
 lpa-console subscribes markets as usual.
 
-> ⚠ **Status (2026-10-21): written, NOT yet run against NiFi.** Steps 3 and 5 come from
-> reading the NiFi flow (`NIFI-Version-Controller`). The DNS, proxy and CA steps were
-> checked only with test clients (Go, curl), not with NiFi.
+> **Status (2026-10-21): run against a real NiFi 2.11** (lpa-core's prod compose, the flow
+> from `NIFI-Version-Controller`). DNS aliases, the CA in `cacerts`, the proxy parameter,
+> subscribe through NiFi, and REST snapshot calls (direct and through the proxy) all worked
+> for all 9 exchanges.
 
 ## While the redirect is on
 
@@ -27,6 +28,12 @@ lpa-console subscribes markets as usual.
 - While NiFi's proxy points to the simulator, a proxied call for a host the simulator does
   not play yet (for example lbank) is **refused**. It is not sent to the real proxy.
 - Stop the real exchange feeds you do not want to mix with test data.
+- ⚠ **Keep the simulator running for the whole test.** If its container stops (or Docker
+  restarts), the aliases are gone, the names resolve to the REAL exchanges again, and NiFi
+  reconnects to them — and STAYS there after the simulator is back (seen in a test: real
+  prices flowed into the local pipeline). After any simulator restart, do step 4 again and
+  check: `docker exec nifi cat /proc/net/tcp` should show connections only to the
+  simulator's address.
 
 ## Steps
 
@@ -82,6 +89,11 @@ If someone later adds an SSL Context Service with its own truststore file, impor
 
 NiFi keeps open connections, and Java caches DNS answers (about 30 s by default). Stop and
 start the exchange groups' `ConnectWebSocket` processors.
+
+Stopping a `ConnectWebSocket` does not run NiFi's "disconnected" path, so markets that were
+`subscribe` stay `subscribe` and NiFi does not send them again. Set them back:
+`UPDATE exchange_markets SET status='pending-subscribe' WHERE status='subscribe';` — NiFi's
+poller sends them within seconds. (A NiFi that starts fresh has the same gap.)
 
 ⚠ **Use Stop, never Terminate** on `ConnectWebSocket`: after a Terminate it keeps a broken
 session factory until NiFi restarts (see `memory/project_nifi_wallex_ws.md`).

@@ -10,8 +10,8 @@
 //   - "ping" → "pong". Text it cannot read → error 30002 "Unrecognized request:<text>"; another
 //     channel → error 30016 "Param error"; empty args → no reply.
 //   - A client that sent no "ping" for 2 minutes is dropped with no close frame (cut 126–145 s
-//     after the last ping; other messages do not count). NiFi never pings, so on real bitget
-//     NiFi's connection is cut about every 2 minutes and it reconnects; so it is here.
+//     after the last ping; other messages do not count). NiFi's BITGET group sends "ping"
+//     every 25 s (a GenerateFlowFile timer), so NiFi itself is never cut.
 //
 // Not copied: an unknown instId is error 30001 on real bitget; here every market exists.
 // The live NiFi group makes no REST call for bitget, so none is served.

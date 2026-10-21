@@ -633,7 +633,7 @@ func bitgetClient(t *testing.T, opts bitget.Options) *websocket.Conn {
 }
 
 // Real bitget drops a client that sent no "ping" for 2 minutes: no close frame (1006).
-// NiFi never pings, so NiFi is cut and reconnects, as on the real exchange.
+// (NiFi's BITGET group pings every 25 s, so NiFi itself stays connected.)
 func TestIdleClientIsDropped(t *testing.T) {
 	c := bitgetClient(t, bitget.Options{IdleLimit: 100 * time.Millisecond, IdleCheck: 20 * time.Millisecond})
 	send(t, c, `{"op":"subscribe","args":[{"channel":"books50","instType":"SPOT","instId":"BTCUSDT"}]}`)

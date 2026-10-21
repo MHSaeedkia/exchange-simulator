@@ -247,3 +247,23 @@ it as each feed's SeqStart (both modes). A later run starts above anything an ea
 reach unless one market ran > 1000 frames/s. Stays < 2^53 (exact for JSON-double readers) for
 ~20 years even with bitget's 12000 step. SEQ_START is now the BASE. Not covered: ompfinex's
 Centrifugo offset counter restarts at its constant (the parser orders on u, not offset).
+
+# Real-scenario test, part 2 (2026-10-21, Docker raised to 12 GB by the user)
+
+- Docker VM restart → jobmanager (no HA) lost the jobs → resubmitted; NiFi kept its CA (same
+  heap env, so compose did not recreate it).
+- **REAL-EXCHANGE LEAK found:** while the simulator container was down, the aliases vanished,
+  NiFi reconnected 6 exchanges to the REAL exchanges (seen in /proc/net/tcp: wallex's real IP
+  ×10 etc.) and stayed there after the simulator came back. Fixed by Stop/Start of all 18
+  ConnectWebSockets; documented in docs/REDIRECT.md (keep the simulator up; check NiFi's TCP
+  connections after any simulator restart).
+- Stopping a ConnectWebSocket runs no "disconnected" path → rows stay `subscribe`, never resent;
+  set them to `pending-subscribe` (documented).
+- **Clean 2-min window through real NiFi, all 9: 0 rejects, 0 missed, 0 send errors, no OOM;**
+  every parsed record passed the type validator; the parser rate matches the simulator's 20/s.
+- ompfinex 3012 closes only while Redis was down at NiFi start (its ping path needs Redis):
+  real ompfinex would cut the same.
+- **Correction:** NiFi DOES ping bitget (25 s) and bybit (15 s) through timer-driven paths; my
+  trace tool missed them. No idle drops are expected or seen. Lesson: when reading a NiFi
+  group, also follow paths rooted at GenerateFlowFile (any processor with no incoming
+  connection), not only ConnectWebSocket and the input port.
