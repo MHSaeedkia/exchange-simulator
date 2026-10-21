@@ -68,7 +68,7 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
 	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir", "api.wallex.ir",
 		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com",
-		"stream.bybit.com", "api.bybit.com"}, cfg.Hosts())
+		"stream.bybit.com", "api.bybit.com", "stream.ompfinex.com", "api.ompfinex.com"}, cfg.Hosts())
 
 	nobitex, ok := cfg.Exchange("nobitex")
 	require.True(t, ok)
@@ -119,6 +119,14 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Endpoint{Host: "api.bybit.com", Port: 443, Path: "/v5/market/orderbook"}, bybit.REST, "NiFi's snapshot branch, through the proxy")
 	assert.Equal(t, 50, bybit.Defaults.BookDepth, "orderbook.50")
 	assert.Equal(t, int64(1), bybit.SeqStepMax, "u moves by exactly one")
+
+	ompfinex, ok := cfg.Exchange("ompfinex")
+	require.True(t, ok)
+	assert.Equal(t, int64(7), ompfinex.ID)
+	assert.Equal(t, domain.Endpoint{Host: "stream.ompfinex.com", Port: 443, Path: "/stream"}, ompfinex.WS, "the REAL address")
+	assert.Equal(t, domain.Endpoint{Host: "api.ompfinex.com", Port: 443, Path: "/v1/market/"}, ompfinex.REST, "NiFi's snapshot branch: /v1/market/${pair}/depth")
+	assert.Equal(t, int64(1), ompfinex.SeqStepMin, "u − U: 1…3 seen")
+	assert.Equal(t, int64(3), ompfinex.SeqStepMax)
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {

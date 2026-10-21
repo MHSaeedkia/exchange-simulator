@@ -14,7 +14,7 @@ each rate.
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
 **Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5),
-bybit (6). The others are added one by one: ompfinex (7), lbank (9).
+bybit (6), ompfinex (7). Still to add: lbank (9).
 
 ## Run it
 
@@ -91,6 +91,7 @@ Centrifugo at `wss://ws.nobitex.ir/connection/websocket`. No REST.
 | `public:orderbook-` (no market) | an ack with no offset, no data |
 | anything before connect; bad JSON; a second connect; an unknown command; a command with no `id`; a subscribe with no channel | close `3501 bad request` |
 | (server, every 25 s) | `{}`; no `{}` back within 8 s → close `3012 no pong` |
+| `{}` when no ping is waiting | close `3501 bad request` |
 
 Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`.
 `offset` moves by one per push.
@@ -146,6 +147,16 @@ Every frame is the whole book: `{"action":"snapshot","arg":{…},"data":[{"asks"
 
 Frames: `{"topic":…,"ts":…,"type":"snapshot"|"delta","data":{"s":…,"b":[…],"a":[…],"u":N,"seq":M},"cts":…}`;
 a delta has only the changed levels, an unchanged side is `[]`.
+
+### ompfinex (7)
+
+Centrifugo at `wss://stream.ompfinex.com/stream`, channel `public-market:r-depth-14`. The nobitex
+protocol with ompfinex's differences: version `6.9.0 OSS`, a ping every 6 s with 4 s to answer,
+and a plain ack `{"id":2,"subscribe":{}}`. The WebSocket carries **deltas only**:
+`{"push":{"channel":…,"pub":{"data":{"u":N,"U":<previous u>,"a":[…],"b":[…]},"offset":M}}}`.
+A book's start is the REST snapshot `GET https://api.ompfinex.com/v1/market/14/depth?limit=50` →
+`{"status":"OK","data":{"lastUpdateId":N,"time":<µs>,"bids":[…],"asks":[…]}}`, which lpa-core asks
+for when a delta finds no baseline.
 
 ### wallex (3)
 
@@ -209,6 +220,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/config` | `.env` → `Config`: global settings + one block per exchange |
 | `internal/domain` | the book, settings, counters, endpoints |
 | `internal/exchange` | the contract every exchange implements |
+| `internal/exchange/ompfinex` | ompfinex: delta frames and the REST depth (its only snapshot) |
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
 | `internal/exchange/bybit` | bybit: orderbook.50 frames, replies, REST order book |
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |

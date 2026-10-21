@@ -35,6 +35,7 @@ import (
 	"exchange-simulator/internal/exchange/bybit"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
+	"exchange-simulator/internal/exchange/ompfinex"
 	"exchange-simulator/internal/exchange/ramzinex"
 	"exchange-simulator/internal/exchange/wallex"
 	"exchange-simulator/internal/feed"
@@ -225,6 +226,8 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 		return bitget.New(bitget.Options{ID: e.ID, WS: e.WS, StepMin: e.SeqStepMin, StepMax: e.SeqStepMax}), nil
 	case "bybit":
 		return bybit.New(bybit.Options{ID: e.ID, WS: e.WS, REST: e.REST}), nil
+	case "ompfinex":
+		return ompfinex.New(ompfinex.Options{ID: e.ID, WS: e.WS, REST: e.REST, StepMin: e.SeqStepMin, StepMax: e.SeqStepMax}), nil
 	case "ramzinex":
 		return ramzinex.New(ramzinex.Options{ID: e.ID, WS: e.WS, REST: e.REST}), nil
 	}

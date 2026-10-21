@@ -45,6 +45,8 @@ services:
           - ${BITGET_WS_HOST:-ws.bitget.com}
           - ${BYBIT_WS_HOST:-stream.bybit.com}
           - ${BYBIT_REST_HOST:-api.bybit.com}
+          - ${OMPFINEX_WS_HOST:-stream.ompfinex.com}
+          - ${OMPFINEX_REST_HOST:-api.ompfinex.com}
 
 networks:
   lpa:

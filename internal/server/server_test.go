@@ -550,6 +550,15 @@ func TestCentrifugoNoPongCloses3012(t *testing.T) {
 	assert.GreaterOrEqual(t, after, 70*time.Millisecond, "first ping at 30 ms + 50 ms to answer")
 }
 
+// A {} nobody asked for closes the socket 3501 (all four real Centrifugo servers do).
+func TestCentrifugoUnaskedPongCloses3501(t *testing.T) {
+	c := nobitexClient(t, nobitex.Options{PingEvery: time.Hour})
+	send(t, c, `{"id":1,"connect":{}}`)
+	send(t, c, `{}`)
+	code, _ := readUntilClosed(t, c, 2*time.Second)
+	assert.Equal(t, 3501, code)
+}
+
 // NiFi answers every {} with {}: the socket stays.
 func TestCentrifugoPongKeepsItOpen(t *testing.T) {
 	c := nobitexClient(t, nobitex.Options{PingEvery: 30 * time.Millisecond, PongTimeout: 50 * time.Millisecond})

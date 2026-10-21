@@ -8,7 +8,8 @@
 //
 //   - Before connect, anything but a connect with an id closes the socket: 3501 "bad request".
 //   - After connect, so do bad JSON, a second connect, an unknown command, a command with no
-//     id (except {}, the answer to a ping) and a subscribe with no channel.
+//     id and a subscribe with no channel. {} answers a ping; the server takes that answer, so
+//     a {} that reaches the handler was not asked for, and closes the socket too.
 //   - A subscribe is acked with the channel's current offset and gets no snapshot. A second
 //     subscribe to the same channel on one connection is error 105. The prefix with no market
 //     is acked (no offset) and gets no data. Another namespace is error 102.
@@ -45,8 +46,11 @@ type Options struct {
 	// AnyNamespace: a channel outside Prefix is acked with no data (ramzinex) instead of
 	// error 102 (nobitex, bitpin).
 	AnyNamespace bool
-	PingEvery    time.Duration // 0 = 25 s
-	PongTimeout  time.Duration // no {} back within this after a {} ping → close 3012 "no pong"; 0 = not checked
+	// PlainAck: the subscribe ack is {"id":N,"subscribe":{}} (ompfinex), with no
+	// recoverable/epoch/offset.
+	PlainAck    bool
+	PingEvery   time.Duration // 0 = 25 s
+	PongTimeout time.Duration // no {} back within this after a {} ping → close 3012 "no pong"; 0 = not checked
 }
 
 // Protocol answers one exchange's Centrifugo messages.
@@ -144,9 +148,7 @@ func (p *Protocol) handle(s exchange.Session, c *conn, msg []byte) {
 			}}))
 			return
 		}
-	case cmd.isPong():
-		return
-	case cmd.ID == 0 || cmd.Connect != nil:
+	case cmd.ID == 0 || cmd.Connect != nil: // {} included: an answer to a ping never gets here
 	case cmd.Subscribe != nil && cmd.Subscribe.Channel != "":
 		p.subscribe(s, c, cmd.ID, cmd.Subscribe.Channel)
 		return
@@ -167,15 +169,21 @@ func (p *Protocol) subscribe(s exchange.Session, c *conn, id uint32, ch string) 
 	case !ok || market == "":
 		// No such stream: acked, with no offset and no data.
 		c.subscribed[ch] = true
-		s.Send(mustJSON(reply{ID: id, Subscribe: &subscribeReply{Recoverable: true, Epoch: p.opts.Epoch, Positioned: true}}))
+		s.Send(p.subscribeAck(id, 0))
 	default:
 		c.subscribed[ch] = true
-		s.Subscribe(market, func(offset int64) []byte {
-			return mustJSON(reply{ID: id, Subscribe: &subscribeReply{
-				Recoverable: true, Epoch: p.opts.Epoch, Offset: offset, Positioned: true,
-			}})
-		}, false)
+		s.Subscribe(market, func(offset int64) []byte { return p.subscribeAck(id, offset) }, false)
 	}
+}
+
+// subscribeAck names the channel's offset (0 = none) unless the server sends plain acks.
+func (p *Protocol) subscribeAck(id uint32, offset int64) []byte {
+	if p.opts.PlainAck {
+		return []byte(fmt.Sprintf(`{"id":%d,"subscribe":{}}`, id))
+	}
+	return mustJSON(reply{ID: id, Subscribe: &subscribeReply{
+		Recoverable: true, Epoch: p.opts.Epoch, Offset: offset, Positioned: true,
+	}})
 }
 
 func (p *Protocol) unsubscribe(s exchange.Session, c *conn, id uint32, ch string) {

@@ -165,6 +165,21 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
   Subscribe only); snapshot=true (real bybit sends it right after the ack).
 - `seq` derived from u: seqBase + 17u + fnv(u)%13 (rises 5…29 per u, as real 4…30).
   REST `u` = WS u / 5 (a different, smaller counter, as real; nobody reads it).
-- OPEN when committed: whether real bybit cuts a client that never pings (NiFi never does);
-  an 11-min probe was still running with no cut.
+- Probe finished after the commit: real bybit did NOT cut a no-ping client in 11 minutes →
+  no Idle rule for bybit.
+- Verified: `go test -race ./...` green. NOT live.
+
+# Step 8 — ompfinex (+ the unasked-pong fix for all Centrifugo) (2026-10-21)
+
+- **Centrifugo pong fix:** an unasked-for `{}` closes 3501 on all four real servers (my
+  earlier code took any `{}` as a pong). Now the SERVER consumes a heartbeat answer only while
+  a ping is outstanding (`conn.lastPing` > `lastPong`) — it never reaches the exchange; any
+  other `{}` reaches the Centrifugo handler, which closes 3501.
+- `centrifugo.Options.PlainAck` for ompfinex's `{"id":N,"subscribe":{}}`.
+- **REST-only snapshot:** optional `WebSocketSnapshots() bool` on the Encoder (feed's
+  `wsSnapshotter`): false → in websocket mode snapshotTo-everyone does nothing (no frame AND
+  no seq step, so the delta chain stays unbroken). In kafka mode the snapshot is sent: it is
+  the REST body + `"action":"snapshot","pair":…` at the end, as NiFi's Jolt publishes it.
+- ompfinex keeps a per-market Centrifugo offset (+1 per push) apart from u (step 1…3);
+  safe without a lock because Snapshot/Update run on the feed goroutine only.
 - Verified: `go test -race ./...` green. NOT live.

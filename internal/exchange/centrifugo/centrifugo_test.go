@@ -111,12 +111,13 @@ func TestEmptyMarketIsAckedWithNoData(t *testing.T) {
 	assert.Regexp(t, `^\{"id":4,"subscribe":\{"recoverable":true,"epoch":"[A-Za-z]{8}","positioned":true\}\}$`, s.sent[0])
 }
 
-// NiFi answers the server's {} ping with {}: nothing to send back.
-func TestPongIsQuiet(t *testing.T) {
+// The answer to a ping never reaches the handler: the server takes it (see package server).
+// A {} that reaches the handler was not asked for, and all four real servers close then.
+func TestUnaskedPongCloses3501(t *testing.T) {
 	s := &session{}
 	connected(s)([]byte(`{}`))
 	assert.Empty(t, s.sent)
-	assert.Empty(t, s.closed)
+	assert.Equal(t, []string{"3501 bad request"}, s.closed)
 }
 
 // Seen live (nobitex, bitpin): a channel of another namespace is error 102.
@@ -173,6 +174,19 @@ func TestHeartbeat(t *testing.T) {
 	assert.True(t, h.IsPong([]byte(`{}`)))
 	assert.False(t, h.IsPong([]byte(`{"id":1,"connect":{}}`)))
 	assert.False(t, h.IsPong([]byte(`hello`)))
+}
+
+// Real ompfinex: the subscribe ack is an empty object, {"id":2,"subscribe":{}}.
+func TestPlainAck(t *testing.T) {
+	s := &session{}
+	on := New(Options{Prefix: "public-market:r-depth-", Version: "6.9.0 OSS", PlainAck: true}).Connect(s)
+	on([]byte(`{"id":1,"connect":{}}`))
+	on([]byte(`{"id":2,"subscribe":{"channel":"public-market:r-depth-14","flag":1}}`))
+	on([]byte(`{"id":4,"subscribe":{"channel":"public-market:r-depth-"}}`))
+	require.Len(t, s.sent, 3)
+	assert.Equal(t, `{"id":2,"subscribe":{}}`, s.sent[1], "NiFi's extra \"flag\" is fine")
+	assert.Equal(t, `{"id":4,"subscribe":{}}`, s.sent[2])
+	assert.Equal(t, []string{"14"}, s.subscribed)
 }
 
 // Real ramzinex: no "version" in the connect reply, a number-like epoch, and a channel of any

@@ -205,6 +205,16 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.1", qtyMin: "0.000001", qtyMax: "0.900000",
 		seqStart: "346400000", seqStepMin: "1", seqStepMax: "1", // u moves by exactly one
 	},
+	{
+		name: "ompfinex", id: "7",
+		wsHost: "stream.ompfinex.com", wsPort: "443", wsPath: "/stream",
+		// NiFi's snapshot branch calls {path}${pair}/depth: the path ends in "/". The REST
+		// snapshot is the ONLY snapshot: the WebSocket carries deltas only.
+		restHost: "api.ompfinex.com", restPort: "443", restPath: "/v1/market/",
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "3",
+		basePrice: "84000", priceStep: "0.1", qtyMin: "0.00000100", qtyMax: "0.02000000",
+		seqStart: "7745000", seqStepMin: "1", seqStepMax: "3", // u − U: 1…3 seen
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

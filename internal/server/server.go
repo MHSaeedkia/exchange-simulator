@@ -244,8 +244,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		if err != nil {
 			break
 		}
-		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.heartbeat.IsPong(msg) {
+		// The answer to an outstanding text ping is the server's: it does not reach the
+		// exchange. An answer nobody asked for does (Centrifugo closes on it).
+		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.lastPing.Load() > c.lastPong.Load() && c.heartbeat.IsPong(msg) {
 			c.lastPong.Store(time.Now().UnixNano())
+			continue
 		}
 		if c.idle != nil && c.idle.IsAlive(msg) {
 			c.lastAlive.Store(time.Now().UnixNano())
@@ -297,6 +300,7 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 		case msg = <-c.queue:
 		case now := <-beat:
 			msg = c.heartbeat.Msg
+			c.lastPing.Store(now.UnixNano())
 			if c.heartbeat.PongTimeout > 0 && beatCheck == nil {
 				beatAt, beatCheck = now.UnixNano(), time.After(c.heartbeat.PongTimeout)
 			}
@@ -361,6 +365,7 @@ type conn struct {
 	idle      *exchange.Idle      // nil = the exchange has none
 	lastAlive atomic.Int64        // unix nanos of connect or the last message idle.IsAlive took
 	lastPong  atomic.Int64        // unix nanos of connect or the last pong (control PONG or the heartbeat's answer)
+	lastPing  atomic.Int64        // unix nanos of the last text ping (Heartbeat)
 }
 
 func (c *conn) ID() string { return c.id }

@@ -44,7 +44,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 4 | ramzinex | WS Centrifugo, full snapshot both sides (+ a REST branch NiFi never uses today) | `wss://websocket.ramzinex.com/websocket` | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
 | 5 | bitget | WS `books50`, snapshot only | `wss://ws.bitget.com/v2/ws/public` | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
 | 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` (through the proxy) | WS `wss://stream.bybit.com/v5/public/spot`, REST `https://api.bybit.com` | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
-| 7 | ompfinex | REST snapshot + Centrifugo WS delta (NO captures, shapes from the parser only) | NOT KNOWN | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
+| 7 | ompfinex | REST snapshot + Centrifugo WS delta (captured 2026-10-21) | `wss://stream.ompfinex.com/stream`, REST `https://api.ompfinex.com/v1` | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
 | 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST `https://www.okx.com/api/v5/market/books` — both through the proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
 | 9 | lbank | WS `fdepth`, snapshot only | NOT KNOWN | `btc_usdt` (lower case, underscore) | none (null) | `TS` ISO without zone, read as UTC |
 
@@ -56,7 +56,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Built in step 5 — see § ramzinex below.
 - **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Built in step 6 — see § bitget below.
 - **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Built in step 7 — see § bybit below.
-- **ompfinex (7)**: REST `{"status":"OK","action":"snapshot","pair":"14","data":{"lastUpdateId":N,"time":µs,"bids","asks"}}`; WS `data.U`, `data.u`, `a`, `b`, qty `"0"` = delete. Subscribe NOT KNOWN.
+- **ompfinex (7)**: built in step 8 — see § ompfinex below.
 - **okx (8)**: built in step 1 (from the okx-only version). Subscribe/unsubscribe `{"op":"subscribe|unsubscribe","args":[{"channel":"books","instId":"BTC-USDT"}]}`; ack `{"event":"subscribe","arg":{…},"connId":…}`; errors 60012 / 60018; text `ping` → `pong`. Frame `{"arg":{…},"action":"snapshot|update","data":[{asks,bids,ts,checksum,prevSeqId,seqId}]}`, 4-element levels, 400 levels on a snapshot. REST `{"code":"0","msg":"","data":[{asks,bids,ts,seqId}]}`.
 - **lbank (9)**: `{"depth":{asks,bids},"SERVER":"V3","count":200,"limit":50,"type":"fdepth","pair":"btc_usdt","TS":"2026-08-25T17:46:51.723"}`. Ping `{"action":"ping","ping":"…"}` and sub-ack `{"status":"success","pair":"btc_usdt"}` exist only as hand-made test fixtures. Subscribe NOT KNOWN.
 
@@ -182,6 +182,8 @@ ex3-raw. `snapshot_request` dropped. No REST, no proxy.
 - Other namespace (nobitex `orderbook:`, bitpin `public:orderbook-`, `trades:…`) → error 102.
 - Repeat subscribe → 105; unsubscribe not subscribed → `{"id":N,"unsubscribe":{}}`.
 - Inferred: unsubscribe with no channel closes like subscribe with none.
+- **An unasked-for `{}` after connect → close 3501** (nobitex, bitpin, ramzinex, ompfinex all
+  checked). `{}` is a pong ONLY while a ping is waiting for its answer.
 - **No pong → close 3012 "no pong"**: 8 s after the `{}` ping on nobitex and bitpin, 10 s on
   ramzinex. The FIRST ping comes at a varying time (13.6–21.2 s seen), then every 25 s
   (the simulator pings on a fixed 25 s beat — not copied).
@@ -250,3 +252,22 @@ RamzinexParser has no REST branch (such a body would be dropped).
   default limit 1; errors are HTTP 200 + `retCode` 10001 + `"result":{}`: `Illegal category`,
   `Parameter symbol [string] missing!`, `Not supported symbols`. `result.u` is another stream's
   counter (smaller); `result.seq` is the same counter as the WS `seq`.
+- **No idle cut seen:** an 11-minute connection with no ping (data flowing) was NOT cut.
+  So no Idle rule for bybit. (Not tested: a quiet market with no data and no ping.)
+
+### ompfinex (7) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `OMPFINEX`):** Centrifugo as NOBITEX (connect `{"id":1,"connect":{}}`, ≤10-byte
+frames = ping → `{}`). Subscribe **`{"id":2,"${status:replace('pending-', '')}":{"channel":"public-market:r-depth-${market}","flag":1}}`**
+(id 2, extra `flag`). `snapshot_request` → InvokeHTTP `GET https://api.ompfinex.com/v1/market/${pair}/depth?limit=50`
+(no proxy) → Jolt `default` action/pair → ex7-raw. Market ids numeric (`14` = BTC/USDT).
+
+**Real ompfinex (probed from a dev Mac):**
+- connect reply `"version":"6.9.0 OSS","ping":6` — **ping every 6 s, no pong → 3012 after 4 s**.
+- subscribe ack is **plain `{"id":2,"subscribe":{}}`** (no recoverable/epoch/offset); repeat → 105;
+  `orderbook:14` → 102; empty market and unknown market (`99999`) → plain ack, no data.
+- WS = **deltas only**: `{"u":7745591,"U":7745590,"a":[…],"b":[]}` (u first), U = previous u,
+  u − U 1…3, deletes `"0"`; Centrifugo offset +1 per push; market 14 ~1 push / 2 s.
+- REST 200 (`Content-Type: application/json`, no charset): `{"status":"OK","data":{"lastUpdateId":N,"time":<µs>,"bids":[…],"asks":[…]}}`,
+  **25 levels by default**, 50 with `limit=50`; bids desc, asks asc. Unknown market → 400
+  `{"status":"BAD_REQUEST","message":"Invalid market."}` (not copied).

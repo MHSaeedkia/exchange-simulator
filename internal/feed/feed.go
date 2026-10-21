@@ -30,6 +30,13 @@ type Encoder interface {
 	Update(market string, b *domain.Book, asks, bids []domain.Level, prevSeq int64, now time.Time) []byte
 }
 
+// wsSnapshotter is an Encoder that may say it has no WebSocket snapshot: its snapshot exists
+// only as a REST body (ompfinex) and its WebSocket carries nothing but deltas, so in
+// websocket mode no snapshot is ever sent to everyone.
+type wsSnapshotter interface {
+	WebSocketSnapshots() bool
+}
+
 // Publisher takes frames in kafka mode.
 type Publisher interface {
 	Publish(frame []byte)
@@ -351,6 +358,9 @@ func (f *Feed) update(now time.Time) {
 // and these snapshots must replace what it holds. A snapshot to one new subscriber keeps
 // the current number, as a real exchange does.
 func (f *Feed) snapshotTo(id string, subs []domain.Subscriber) {
+	if r, ok := f.opts.Encoder.(wsSnapshotter); ok && !r.WebSocketSnapshots() && f.opts.Publisher == nil {
+		return // no frame, and no sequence step for it: the deltas carry on
+	}
 	_, existed := f.books[id]
 	b := f.book(id)
 	if subs == nil && existed {

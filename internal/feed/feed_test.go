@@ -347,6 +347,47 @@ func TestStopMakesItSilentAndStartChainsOn(t *testing.T) {
 	chained(t, append(before, s.drain()...), "BTC-USDT")
 }
 
+// restOnly is an exchange whose snapshot exists only as a REST body (ompfinex): its
+// WebSocket carries nothing but deltas.
+type restOnly struct{ *okx.Exchange }
+
+func (restOnly) WebSocketSnapshots() bool { return false }
+
+// Such an exchange sends no snapshot over the WebSocket on start, and its sequence does not
+// move for one: the deltas carry on from the last one sent.
+func TestNoWebSocketSnapshotForARestOnlyExchange(t *testing.T) {
+	opts := options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1})
+	opts.Encoder = restOnly{okx.New(okx.Options{ID: 7, StepMin: 1, StepMax: 5})}
+	opts.Running = false
+	f := New(opts)
+	start(t, f)
+	s := newSub("c1")
+	f.Subscribe(s, "BTC-USDT", nil, false)
+
+	f.Start()
+	time.Sleep(40 * time.Millisecond)
+	got := s.drain()
+	require.NotEmpty(t, got)
+	for _, fr := range got {
+		assert.Equal(t, okx.ActionUpdate, fr.Action)
+	}
+	assert.Equal(t, int64(1000), got[0].Data[0].PrevSeqID, "no hidden step for an unsent snapshot")
+	assert.Zero(t, f.Counters().Snapshots)
+}
+
+// In kafka mode the same exchange's snapshot IS sent: it is the REST body NiFi would publish.
+func TestKafkaModeStillSendsTheRestOnlySnapshot(t *testing.T) {
+	opts := options(t, domain.Settings{Records: 0, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1})
+	opts.Encoder = restOnly{okx.New(okx.Options{ID: 7, StepMin: 1, StepMax: 5})}
+	p := &pub{}
+	opts.Publisher = p
+	f := New(opts)
+	start(t, f)
+	f.SetMarkets([]string{"BTC-USDT"})
+	require.Eventually(t, func() bool { return len(p.all()) == 1 }, time.Second, 5*time.Millisecond)
+	assert.Equal(t, okx.ActionSnapshot, p.all()[0].Action)
+}
+
 func TestKafkaModeWhileStoppedWaitsForStart(t *testing.T) {
 	p := &pub{}
 	opts := options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1})
