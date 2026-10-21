@@ -21,14 +21,18 @@ import (
 // ChannelPrefix + market is the channel of a market's book.
 const ChannelPrefix = "public:orderbook-"
 
+// PongTimeout is how long real nobitex waits for {} after its {} ping.
+const PongTimeout = 8 * time.Second
+
 // Version is what real nobitex's connect reply says.
 const Version = "6.9.3 OSS"
 
 // Options mirrors the NOBITEX_* settings in .env.
 type Options struct {
-	ID        int64
-	WS        domain.Endpoint
-	PingEvery time.Duration // 0 = 25 s, as real nobitex
+	ID          int64
+	WS          domain.Endpoint
+	PingEvery   time.Duration // 0 = 25 s, as real nobitex
+	PongTimeout time.Duration // 0 = PongTimeout
 }
 
 // Exchange is the fake nobitex.
@@ -39,7 +43,12 @@ type Exchange struct {
 
 // New builds the fake nobitex.
 func New(opts Options) *Exchange {
-	return &Exchange{Protocol: centrifugo.New(ChannelPrefix, Version, opts.PingEvery), opts: opts}
+	if opts.PongTimeout == 0 {
+		opts.PongTimeout = PongTimeout
+	}
+	return &Exchange{Protocol: centrifugo.New(centrifugo.Options{
+		Prefix: ChannelPrefix, Version: Version, PingEvery: opts.PingEvery, PongTimeout: opts.PongTimeout,
+	}), opts: opts}
 }
 
 var (

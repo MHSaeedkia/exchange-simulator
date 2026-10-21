@@ -57,6 +57,7 @@ type Server struct {
 	log       *slog.Logger
 	upgrader  websocket.Upgrader
 	handlers  map[string]http.HandlerFunc // host + path → handler
+	prefixes  []prefixRoute               // paths ending in "/": everything under them
 	ports     []int
 	tunnels   map[string]bool          // host:port the proxy may tunnel to
 	listeners map[int]*portListener    // filled by Listen
@@ -83,6 +84,9 @@ func New(routes []Route, opts Options, log *slog.Logger) (*Server, error) {
 			return fmt.Errorf("%s: %s%s is already served by another exchange", owner, e.Host, e.Path)
 		}
 		s.handlers[k] = h
+		if strings.HasSuffix(e.Path, "/") {
+			s.prefixes = append(s.prefixes, prefixRoute{host: strings.ToLower(e.Host), path: e.Path, h: h})
+		}
 		s.tunnels[tunnelKey(e.Host, e.Port)] = true
 		ports[e.Port] = true
 		return nil
@@ -107,7 +111,15 @@ func New(routes []Route, opts Options, log *slog.Logger) (*Server, error) {
 	return s, nil
 }
 
-// Handler routes by Host (without its port) and path.
+// prefixRoute serves every path under path (an endpoint whose path ends in "/": ramzinex
+// puts the market inside its REST path).
+type prefixRoute struct {
+	host, path string
+	h          http.HandlerFunc
+}
+
+// Handler routes by Host (without its port) and path: the exact path first, then the
+// longest prefix route.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host := r.Host
@@ -115,6 +127,14 @@ func (s *Server) Handler() http.Handler {
 			host = h
 		}
 		h, ok := s.handlers[key(host, r.URL.Path)]
+		if !ok {
+			best := ""
+			for _, p := range s.prefixes {
+				if p.host == strings.ToLower(host) && strings.HasPrefix(r.URL.Path, p.path) && len(p.path) > len(best) {
+					best, h, ok = p.path, p.h, true
+				}
+			}
+		}
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -192,6 +212,10 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		id: connID(), ws: ws, feed: feed,
 		queue: make(chan []byte, s.opts.SendBuffer), done: make(chan struct{}),
 	}
+	if h, ok := ex.(exchange.Heartbeater); ok {
+		hb := h.Heartbeat()
+		c.heartbeat = &hb
+	}
 	if k, ok := ex.(exchange.KeepaliveRules); ok {
 		ka := k.Keepalive()
 		c.keepalive = &ka
@@ -214,6 +238,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		if err != nil {
 			break
 		}
+		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.heartbeat.IsPong(msg) {
+			c.lastPong.Store(time.Now().UnixNano())
+		}
 		onMessage(msg)
 	}
 
@@ -227,13 +254,12 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 // (Heartbeater) and its keepalive (control pings, and the closes its rules call for). Pings
 // are not counted as deliveries: they are not market data.
 func (s *Server) write(c *conn, ex exchange.Exchange) {
-	var beat, ping, pongCheck, life <-chan time.Time
-	var beatMsg []byte
-	if h, ok := ex.(exchange.Heartbeater); ok {
-		msg, every := h.Heartbeat()
-		ticker := time.NewTicker(every)
+	var beat, beatCheck, ping, pongCheck, life <-chan time.Time
+	var beatAt int64 // unix nanos of the text ping whose answer is awaited
+	if hb := c.heartbeat; hb != nil {
+		ticker := time.NewTicker(hb.Every)
 		defer ticker.Stop()
-		beat, beatMsg = ticker.C, msg
+		beat = ticker.C
 	}
 	var pongTimer *time.Timer
 	if k := c.keepalive; k != nil {
@@ -254,8 +280,18 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 		case <-c.done:
 			return
 		case msg = <-c.queue:
-		case <-beat:
-			msg = beatMsg
+		case now := <-beat:
+			msg = c.heartbeat.Msg
+			if c.heartbeat.PongTimeout > 0 && beatCheck == nil {
+				beatAt, beatCheck = now.UnixNano(), time.After(c.heartbeat.PongTimeout)
+			}
+		case <-beatCheck:
+			beatCheck = nil
+			if c.lastPong.Load() < beatAt {
+				s.closeWith(c, ex, c.heartbeat.CloseCode, c.heartbeat.CloseText)
+				return
+			}
+			continue
 		case <-ping:
 			kind, msg = websocket.PingMessage, c.keepalive.PingPayload
 		case now := <-pongCheck:
@@ -264,10 +300,10 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 				pongTimer.Reset(wait)
 				continue
 			}
-			s.closeNormal(c, ex, "no pong")
+			s.closeWith(c, ex, websocket.CloseNormalClosure, "")
 			return
 		case <-life:
-			s.closeNormal(c, ex, "connection lifetime reached")
+			s.closeWith(c, ex, websocket.CloseNormalClosure, "")
 			return
 		}
 		_ = c.ws.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
@@ -280,12 +316,10 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 	}
 }
 
-// closeNormal ends a connection the way the exchange's own rules do: a normal close (1000).
-func (s *Server) closeNormal(c *conn, ex exchange.Exchange, reason string) {
-	_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-		time.Now().Add(s.opts.WriteTimeout))
-	s.log.Info("websocket closed by the exchange's rules", "exchange", ex.Name(), "conn", c.id, "reason", reason)
-	c.close()
+// closeWith ends a connection the way the exchange's own rules do (no pong, lifetime).
+func (s *Server) closeWith(c *conn, ex exchange.Exchange, code int, text string) {
+	s.log.Info("websocket closed by the exchange's rules", "exchange", ex.Name(), "conn", c.id, "code", code, "text", text)
+	c.Close(code, text)
 }
 
 func key(host, path string) string { return strings.ToLower(host) + path }
@@ -299,8 +333,9 @@ type conn struct {
 	queue     chan []byte
 	done      chan struct{}
 	once      sync.Once
+	heartbeat *exchange.Heartbeat // nil = the exchange has none
 	keepalive *exchange.Keepalive // nil = the exchange has none
-	lastPong  atomic.Int64        // unix nanos of connect or the last PONG
+	lastPong  atomic.Int64        // unix nanos of connect or the last pong (control PONG or the heartbeat's answer)
 }
 
 func (c *conn) ID() string { return c.id }

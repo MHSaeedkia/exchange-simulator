@@ -33,6 +33,7 @@ import (
 	"exchange-simulator/internal/exchange/bitpin"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
+	"exchange-simulator/internal/exchange/ramzinex"
 	"exchange-simulator/internal/exchange/wallex"
 	"exchange-simulator/internal/feed"
 	"exchange-simulator/internal/httpapi"
@@ -218,6 +219,8 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 		return bitpin.New(bitpin.Options{ID: e.ID, WS: e.WS, PriceDecimals: e.Shape.PriceScale()}), nil
 	case "wallex":
 		return wallex.New(wallex.Options{ID: e.ID, WS: e.WS}), nil
+	case "ramzinex":
+		return ramzinex.New(ramzinex.Options{ID: e.ID, WS: e.WS, REST: e.REST}), nil
 	}
 	return nil, fmt.Errorf("exchange %q has a config block but no implementation", e.Name)
 }

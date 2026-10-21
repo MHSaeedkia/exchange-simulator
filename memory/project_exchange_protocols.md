@@ -41,7 +41,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 1 | nobitex | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://ws.nobitex.ir/connection/websocket` | `BTCUSDT` (WS channel `public:orderbook-BTCUSDT`) | WS `pub.offset`, jump 0; REST null | `lastUpdate` epoch ms (number) |
 | 2 | bitpin | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://centrifugo.bitpin.ir/connection/websocket` | `BTC_USDT` (underscore, REST `pair` must match) | WS `pub.offset`, jump 0; REST null | WS ISO string, REST epoch ms number |
 | 3 | wallex | WS only; each frame = full snapshot of ONE side | `wss://api.wallex.ir/ws` | `BTCUSDT` (`BTCUSDT@buyDepth` / `@sellDepth`) | none (null) | none (processing time) |
-| 4 | ramzinex | WS Centrifugo, full snapshot both sides | NOT KNOWN | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
+| 4 | ramzinex | WS Centrifugo, full snapshot both sides (+ a REST branch NiFi never uses today) | `wss://websocket.ramzinex.com/websocket` | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
 | 5 | bitget | WS `books50`, snapshot only | NOT KNOWN | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
 | 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` | WS `wss://stream.bybit.com/v5/public/spot` *(measured directly, NiFi use inferred)* | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
 | 7 | ompfinex | REST snapshot + Centrifugo WS delta (NO captures, shapes from the parser only) | NOT KNOWN | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
@@ -53,7 +53,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - **nobitex (1)**: WS frame `{"push":{"channel":"public:orderbook-BTCUSDT","pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`, levels `[str,str]`, 24/side. Built in step 2 — see § nobitex below.
 - **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price`, `event_time`; 50 levels. Built in step 3 — see § bitpin below.
 - **wallex (3)**: built in step 4 — see § wallex below. First frame `{"sid":…,"upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
-- **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Subscribe NOT KNOWN.
+- **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Built in step 5 — see § ramzinex below.
 - **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Subscribe NOT KNOWN.
 - **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Subscribe `{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}` *(inferred)*.
 - **ompfinex (7)**: REST `{"status":"OK","action":"snapshot","pair":"14","data":{"lastUpdateId":N,"time":µs,"bids","asks"}}`; WS `data.U`, `data.u`, `a`, `b`, qty `"0"` = delete. Subscribe NOT KNOWN.
@@ -182,3 +182,27 @@ ex3-raw. `snapshot_request` dropped. No REST, no proxy.
 - Other namespace (nobitex `orderbook:`, bitpin `public:orderbook-`, `trades:…`) → error 102.
 - Repeat subscribe → 105; unsubscribe not subscribed → `{"id":N,"unsubscribe":{}}`.
 - Inferred: unsubscribe with no channel closes like subscribe with none.
+- **No pong → close 3012 "no pong"**: 8 s after the `{}` ping on nobitex and bitpin, 10 s on
+  ramzinex. The FIRST ping comes at a varying time (13.6–21.2 s seen), then every 25 s
+  (the simulator pings on a fixed 25 s beat — not copied).
+
+### ramzinex (4) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `RAMZINEX`):** the NOBITEX-style Centrifugo flow (connect `{"id":1,"connect":{}}`,
+≤10-byte frames = ping → `{}`, reset on disconnect), channel **`orderbook:${market}`** (numeric
+id), no proxy. Unlike nobitex/bitpin it still has a **snapshot branch**: `snapshot_request` →
+InvokeHTTP `GET https://publicapi.ramzinex.com/exchange/api/v1.0/exchange/orderbooks/${pair}/buys_sells`
+→ Jolt `default` action/pair → ex4-raw. lpa-core never sends ramzinex a snapshot request, and
+RamzinexParser has no REST branch (such a body would be dropped).
+
+**Real ramzinex (probed from a dev Mac):**
+- connect reply **without `version`**: `{"id":1,"connect":{"client":"<uuid>","ping":25,"pong":true}}`.
+- subscribe ack epoch is **number-like** (`"1790133057"`; unknown channels get the current unix time).
+- **any namespace accepted** (`public:orderbook-12` → ack, no data) — no error 102.
+- repeat → 105; bad JSON / `{}` before connect / subscribe without channel → 3501; no pong → 3012 after 10 s.
+- push ~6 KB, every ~2–3 s for market 12, **50 levels per side, BOTH descending**; level
+  `[84048,0.000042,3.530016,false,null,10,1792611279396]` — notional is a float product with
+  float artifacts (`1373.3777799999998`; only ~half equal Python's p*q, so computed in some
+  other order); el6 8…90 (meaning unknown); el7 per-level epoch ms, up to ~25 min old.
+- REST 200: `{"data":{"buys":[…],"sells":[…]},"status":0}` (same arrays); unknown market →
+  **400 `{"error":"Order book not found for pair_id"}`** (the simulator has every market: not copied).

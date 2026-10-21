@@ -13,8 +13,8 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3). The others are added one
-by one: ramzinex (4), bitget (5), bybit (6), ompfinex (7), lbank (9).
+**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4). The others
+are added one by one: bitget (5), bybit (6), ompfinex (7), lbank (9).
 
 ## Run it
 
@@ -90,7 +90,7 @@ Centrifugo at `wss://ws.nobitex.ir/connection/websocket`. No REST.
 | a channel of another namespace | `{"id":1,"error":{"code":102,"message":"unknown channel"}}` |
 | `public:orderbook-` (no market) | an ack with no offset, no data |
 | anything before connect; bad JSON; a second connect; an unknown command; a command with no `id`; a subscribe with no channel | close `3501 bad request` |
-| (server, every 25 s) | `{}` |
+| (server, every 25 s) | `{}`; no `{}` back within 8 s → close `3012 no pong` |
 
 Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`.
 `offset` moves by one per push.
@@ -102,6 +102,16 @@ No REST. The same protocol and replies as nobitex (version `6.9.2 OSS`). Every p
 WHOLE book (50 levels), written as bitpin writes it, with spaces and prices padded to the
 decimals of `BITPIN_PRICE_STEP` (`"84150.00"`):
 `{"push":{"channel":…,"pub":{"data":{"bids": […], "asks": […], "volume_ask": …, "volume_bid": …, "symbol": …, "event": "market_data", "price": …, "event_time": "…Z"},"offset":N}}}`.
+
+### ramzinex (4)
+
+Centrifugo at `wss://websocket.ramzinex.com/websocket`, channel `orderbook:12` (numeric market
+ids). The nobitex protocol with ramzinex's differences: no `version` in the connect reply, a
+number-like epoch, any channel namespace acked (no data), 10 s to answer a ping. Every push is
+the WHOLE book, both sides price-descending:
+`{"push":{"channel":"orderbook:12","pub":{"data":{"buys":[[84048,0.000042,3.530016,false,null,10,1792611279396],…],"sells":[…]},"offset":N}}}`.
+REST: `GET https://publicapi.ramzinex.com/exchange/api/v1.0/exchange/orderbooks/12/buys_sells` →
+`{"data":{"buys":[…],"sells":[…]},"status":0}`.
 
 ### wallex (3)
 
@@ -169,6 +179,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
 | `internal/exchange/nobitex` | nobitex: its book frame |
 | `internal/exchange/bitpin` | bitpin: its book frame |
+| `internal/exchange/ramzinex` | ramzinex: its book frame and REST order book |
 | `internal/exchange/wallex` | wallex: side frames, the open message, the 51-subscribe budget, keepalive rules |
 | `internal/feed` | one generator per exchange: owns its books, keeps the rate, sends every frame in order |
 | `internal/server` | one listener per port, TLS, routing by host name + path, WebSocket connections |

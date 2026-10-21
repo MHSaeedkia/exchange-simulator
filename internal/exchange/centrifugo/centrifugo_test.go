@@ -44,7 +44,9 @@ func (s *session) Close(code int, text string) {
 	s.closed = append(s.closed, strconv.Itoa(code)+" "+text)
 }
 
-func newProtocol() *Protocol { return New("orderbook:", "6.9.2 OSS", 0) }
+func newProtocol() *Protocol {
+	return New(Options{Prefix: "orderbook:", Version: "6.9.2 OSS", PongTimeout: 8 * time.Second})
+}
 
 // connected is a connection handler after NiFi's {"id":1,"connect":{}}, with the reply dropped.
 func connected(s *session) func([]byte) {
@@ -159,10 +161,33 @@ func TestBadRequestsClose3501(t *testing.T) {
 	}
 }
 
-func TestHeartbeatIsAnEmptyObjectEvery25s(t *testing.T) {
-	msg, every := newProtocol().Heartbeat()
-	assert.Equal(t, "{}", string(msg))
-	assert.Equal(t, 25*time.Second, every)
+// Seen live: {} every 25 s; with no {} back within 8 s (nobitex, bitpin) or 10 s (ramzinex)
+// the socket is closed 3012 "no pong".
+func TestHeartbeat(t *testing.T) {
+	h := newProtocol().Heartbeat()
+	assert.Equal(t, "{}", string(h.Msg))
+	assert.Equal(t, 25*time.Second, h.Every)
+	assert.Equal(t, 8*time.Second, h.PongTimeout)
+	assert.Equal(t, 3012, h.CloseCode)
+	assert.Equal(t, "no pong", h.CloseText)
+	assert.True(t, h.IsPong([]byte(`{}`)))
+	assert.False(t, h.IsPong([]byte(`{"id":1,"connect":{}}`)))
+	assert.False(t, h.IsPong([]byte(`hello`)))
+}
+
+// Real ramzinex: no "version" in the connect reply, a number-like epoch, and a channel of any
+// namespace is acked with no data instead of error 102.
+func TestRamzinexStyleOptions(t *testing.T) {
+	s := &session{}
+	on := New(Options{Prefix: "orderbook:", Epoch: "1790133057", AnyNamespace: true}).Connect(s)
+	on([]byte(`{"id":1,"connect":{}}`))
+	on([]byte(`{"id":3,"subscribe":{"channel":"public:orderbook-12"}}`))
+	on([]byte(`{"id":4,"subscribe":{"channel":"orderbook:12"}}`))
+	require.Len(t, s.sent, 3)
+	assert.Regexp(t, `^\{"id":1,"connect":\{"client":"[0-9a-f-]{36}","ping":25,"pong":true\}\}$`, s.sent[0])
+	assert.Equal(t, `{"id":3,"subscribe":{"recoverable":true,"epoch":"1790133057","positioned":true}}`, s.sent[1])
+	assert.Equal(t, `{"id":4,"subscribe":{"recoverable":true,"epoch":"1790133057","offset":3873262,"positioned":true}}`, s.sent[2])
+	assert.Equal(t, []string{"12"}, s.subscribed)
 }
 
 func TestPushEnvelope(t *testing.T) {

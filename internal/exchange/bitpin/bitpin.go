@@ -25,6 +25,9 @@ import (
 // ChannelPrefix + market is the channel of a market's book.
 const ChannelPrefix = "orderbook:"
 
+// PongTimeout is how long real bitpin waits for {} after its {} ping.
+const PongTimeout = 8 * time.Second
+
 // Version is what real bitpin's connect reply says.
 const Version = "6.9.2 OSS"
 
@@ -44,7 +47,9 @@ type Exchange struct {
 
 // New builds the fake bitpin.
 func New(opts Options) *Exchange {
-	return &Exchange{Protocol: centrifugo.New(ChannelPrefix, Version, opts.PingEvery), opts: opts}
+	return &Exchange{Protocol: centrifugo.New(centrifugo.Options{
+		Prefix: ChannelPrefix, Version: Version, PingEvery: opts.PingEvery, PongTimeout: PongTimeout,
+	}), opts: opts}
 }
 
 var (

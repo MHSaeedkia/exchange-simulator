@@ -179,6 +179,15 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.01", qtyMin: "0.00000001", qtyMax: "0.20000000",
 		seqStart: "1", seqStepMin: "1", seqStepMax: "1", // no sequence on the wire
 	},
+	{
+		name: "ramzinex", id: "4",
+		wsHost: "websocket.ramzinex.com", wsPort: "443", wsPath: "/websocket",
+		// NiFi's snapshot branch calls {path}${pair}/buys_sells: the path ends in "/".
+		restHost: "publicapi.ramzinex.com", restPort: "443", restPath: "/exchange/api/v1.0/exchange/orderbooks/",
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // ramzinex sends 50 levels, every push the whole book
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.0000010", qtyMax: "0.0200000",
+		seqStart: "1900000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

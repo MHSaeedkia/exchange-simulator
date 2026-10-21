@@ -33,23 +33,34 @@ import (
 const (
 	CodeUnknownChannel    = 102  // error: a channel of another namespace
 	CodeAlreadySubscribed = 105  // error: a second subscribe to a channel on one connection
+	CloseNoPong           = 3012 // close: no {} back after a {} ping
 	CloseBadRequest       = 3501 // close: a message the server does not take
 )
 
-// Protocol answers one exchange's Centrifugo messages.
-type Protocol struct {
-	prefix    string // a market's channel is prefix + market
-	version   string // what the connect reply names
-	pingEvery time.Duration
-	epoch     string // the stream epoch a subscribe ack names; fixed for the life of the process
+// Options are where the real servers differ.
+type Options struct {
+	Prefix  string // a market's channel is Prefix + market
+	Version string // what the connect reply names; "" = no version field (ramzinex)
+	Epoch   string // the stream epoch a subscribe ack names; "" = 8 random letters (nobitex, bitpin)
+	// AnyNamespace: a channel outside Prefix is acked with no data (ramzinex) instead of
+	// error 102 (nobitex, bitpin).
+	AnyNamespace bool
+	PingEvery    time.Duration // 0 = 25 s
+	PongTimeout  time.Duration // no {} back within this after a {} ping → close 3012 "no pong"; 0 = not checked
 }
 
-// New builds the protocol for channels prefix+market. pingEvery 0 = 25 s, as the real servers.
-func New(prefix, version string, pingEvery time.Duration) *Protocol {
-	if pingEvery == 0 {
-		pingEvery = 25 * time.Second
+// Protocol answers one exchange's Centrifugo messages.
+type Protocol struct{ opts Options }
+
+// New builds the protocol.
+func New(opts Options) *Protocol {
+	if opts.PingEvery == 0 {
+		opts.PingEvery = 25 * time.Second
 	}
-	return &Protocol{prefix: prefix, version: version, pingEvery: pingEvery, epoch: randomLetters(8)}
+	if opts.Epoch == "" {
+		opts.Epoch = randomLetters(8)
+	}
+	return &Protocol{opts: opts}
 }
 
 var (
@@ -60,8 +71,17 @@ var (
 // SeqStep is 1: a Centrifugo offset moves by one per publication.
 func (p *Protocol) SeqStep(*mrand.Rand) int64 { return 1 }
 
-// Heartbeat is the server's {} ping.
-func (p *Protocol) Heartbeat() ([]byte, time.Duration) { return []byte("{}"), p.pingEvery }
+// Heartbeat is the server's {} ping; the client answers {}.
+func (p *Protocol) Heartbeat() exchange.Heartbeat {
+	return exchange.Heartbeat{
+		Msg: []byte("{}"), Every: p.opts.PingEvery, PongTimeout: p.opts.PongTimeout,
+		IsPong: func(msg []byte) bool {
+			c, ok := parse(msg)
+			return ok && c.isPong()
+		},
+		CloseCode: CloseNoPong, CloseText: "no pong",
+	}
+}
 
 // Envelope is NiFi's ReplaceText on the object-root push.
 func (p *Protocol) Envelope(frame []byte, id string, simulation int) []byte {
@@ -70,7 +90,7 @@ func (p *Protocol) Envelope(frame []byte, id string, simulation int) []byte {
 
 // Push wraps a market's data, kept byte for byte, in a publication at offset.
 func (p *Protocol) Push(market string, offset int64, data []byte) []byte {
-	ch, _ := json.Marshal(p.prefix + market)
+	ch, _ := json.Marshal(p.opts.Prefix + market)
 	out := make([]byte, 0, len(data)+len(ch)+64)
 	out = append(out, `{"push":{"channel":`...)
 	out = append(out, ch...)
@@ -120,7 +140,7 @@ func (p *Protocol) handle(s exchange.Session, c *conn, msg []byte) {
 		if cmd.Connect != nil && cmd.ID != 0 {
 			c.connected = true
 			s.Send(mustJSON(reply{ID: cmd.ID, Connect: &connectReply{
-				Client: exchange.NewUUID(), Version: p.version, Ping: int(p.pingEvery / time.Second), Pong: true,
+				Client: exchange.NewUUID(), Version: p.opts.Version, Ping: int(p.opts.PingEvery / time.Second), Pong: true,
 			}}))
 			return
 		}
@@ -138,35 +158,35 @@ func (p *Protocol) handle(s exchange.Session, c *conn, msg []byte) {
 }
 
 func (p *Protocol) subscribe(s exchange.Session, c *conn, id uint32, ch string) {
-	market, ok := strings.CutPrefix(ch, p.prefix)
+	market, ok := strings.CutPrefix(ch, p.opts.Prefix)
 	switch {
-	case !ok:
+	case !ok && !p.opts.AnyNamespace:
 		s.Send(errorReply(id, CodeUnknownChannel, "unknown channel"))
 	case c.subscribed[ch]:
 		s.Send(errorReply(id, CodeAlreadySubscribed, "already subscribed"))
-	case market == "":
-		// No such market: acked, no stream, so no offset and no data.
+	case !ok || market == "":
+		// No such stream: acked, with no offset and no data.
 		c.subscribed[ch] = true
-		s.Send(mustJSON(reply{ID: id, Subscribe: &subscribeReply{Recoverable: true, Epoch: p.epoch, Positioned: true}}))
+		s.Send(mustJSON(reply{ID: id, Subscribe: &subscribeReply{Recoverable: true, Epoch: p.opts.Epoch, Positioned: true}}))
 	default:
 		c.subscribed[ch] = true
 		s.Subscribe(market, func(offset int64) []byte {
 			return mustJSON(reply{ID: id, Subscribe: &subscribeReply{
-				Recoverable: true, Epoch: p.epoch, Offset: offset, Positioned: true,
+				Recoverable: true, Epoch: p.opts.Epoch, Offset: offset, Positioned: true,
 			}})
 		}, false)
 	}
 }
 
 func (p *Protocol) unsubscribe(s exchange.Session, c *conn, id uint32, ch string) {
-	market, ok := strings.CutPrefix(ch, p.prefix)
-	if !ok {
+	market, ok := strings.CutPrefix(ch, p.opts.Prefix)
+	if !ok && !p.opts.AnyNamespace {
 		s.Send(errorReply(id, CodeUnknownChannel, "unknown channel"))
 		return
 	}
 	delete(c.subscribed, ch)
 	ack := []byte(fmt.Sprintf(`{"id":%d,"unsubscribe":{}}`, id))
-	if market == "" {
+	if !ok || market == "" {
 		s.Send(ack)
 		return
 	}
@@ -205,7 +225,7 @@ type reply struct {
 
 type connectReply struct {
 	Client  string `json:"client"`
-	Version string `json:"version"`
+	Version string `json:"version,omitempty"`
 	Ping    int    `json:"ping"`
 	Pong    bool   `json:"pong"`
 }

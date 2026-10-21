@@ -27,6 +27,7 @@ import (
 	"exchange-simulator/internal/domain"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
+	"exchange-simulator/internal/exchange/ramzinex"
 	"exchange-simulator/internal/exchange/wallex"
 	"exchange-simulator/internal/feed"
 )
@@ -515,4 +516,85 @@ func TestCentrifugoBadRequestCloses3501(t *testing.T) {
 	assert.Equal(t, 3501, ce.Code)
 	assert.Equal(t, "bad request", ce.Text)
 	assert.Eventually(t, func() bool { return s.Connections("nobitex") == 0 }, time.Second, 5*time.Millisecond)
+}
+
+// nobitexClient dials a nobitex whose ping and pong times are short enough for a test.
+func nobitexClient(t *testing.T, opts nobitex.Options) *websocket.Conn {
+	t.Helper()
+	ws := domain.Endpoint{Host: "ws.nobitex.ir", Port: 443, Path: "/connection/websocket"}
+	opts.ID, opts.WS = 1, ws
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := nobitex.New(opts)
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+ws.Path, http.Header{"Host": []string{ws.Host}})
+	require.NoError(t, err)
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// Seen live: no {} back within 8 s of nobitex's {} ping closes the socket 3012 "no pong".
+func TestCentrifugoNoPongCloses3012(t *testing.T) {
+	c := nobitexClient(t, nobitex.Options{PingEvery: 30 * time.Millisecond, PongTimeout: 50 * time.Millisecond})
+	send(t, c, `{"id":1,"connect":{}}`)
+	code, after := readUntilClosed(t, c, 2*time.Second) // reads, never answers {}
+	assert.Equal(t, 3012, code)
+	assert.GreaterOrEqual(t, after, 70*time.Millisecond, "first ping at 30 ms + 50 ms to answer")
+}
+
+// NiFi answers every {} with {}: the socket stays.
+func TestCentrifugoPongKeepsItOpen(t *testing.T) {
+	c := nobitexClient(t, nobitex.Options{PingEvery: 30 * time.Millisecond, PongTimeout: 50 * time.Millisecond})
+	send(t, c, `{"id":1,"connect":{}}`)
+	deadline := time.Now().Add(400 * time.Millisecond)
+	require.NoError(t, c.SetReadDeadline(deadline.Add(time.Second)))
+	pings := 0
+	for time.Now().Before(deadline) {
+		_, b, err := c.ReadMessage()
+		require.NoError(t, err, "still open")
+		if string(b) == "{}" {
+			pings++
+			send(t, c, `{}`)
+		}
+	}
+	assert.Greater(t, pings, 5)
+}
+
+// A REST path that ends in "/" serves every path under it (ramzinex puts the market inside
+// the path: /exchange/api/v1.0/exchange/orderbooks/12/buys_sells).
+func TestRestPrefixRoute(t *testing.T) {
+	ws := domain.Endpoint{Host: "websocket.ramzinex.com", Port: 443, Path: "/websocket"}
+	rest := domain.Endpoint{Host: "publicapi.ramzinex.com", Port: 443, Path: "/exchange/api/v1.0/exchange/orderbooks/"}
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := ramzinex.New(ramzinex.Options{ID: 4, WS: ws, REST: rest})
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	get := func(host, path string) int {
+		req, err := http.NewRequest(http.MethodGet, srv.URL+path, nil)
+		require.NoError(t, err)
+		req.Host = host
+		resp, err := http.DefaultClient.Do(req)
+		require.NoError(t, err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	assert.Equal(t, http.StatusOK, get(rest.Host, rest.Path+"12/buys_sells"))
+	assert.Equal(t, int64(1), f.Counters().RestCalls)
+	assert.Equal(t, http.StatusNotFound, get(rest.Host, "/other/12/buys_sells"))
+	assert.Equal(t, http.StatusNotFound, get("api.wallex.ir", rest.Path+"12/buys_sells"), "the host still counts")
 }

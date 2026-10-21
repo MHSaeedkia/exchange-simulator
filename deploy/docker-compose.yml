@@ -40,6 +40,8 @@ services:
           - ${NOBITEX_WS_HOST:-ws.nobitex.ir}
           - ${BITPIN_WS_HOST:-centrifugo.bitpin.ir}
           - ${WALLEX_WS_HOST:-api.wallex.ir}
+          - ${RAMZINEX_WS_HOST:-websocket.ramzinex.com}
+          - ${RAMZINEX_REST_HOST:-publicapi.ramzinex.com}
 
 networks:
   lpa:

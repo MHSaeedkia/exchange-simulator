@@ -71,10 +71,22 @@ type Exchange interface {
 	Envelope(frame []byte, id string, simulation int) []byte
 }
 
-// Heartbeater is an exchange whose server pings every client on its own (Centrifugo's {}
-// every 25 s). The server sends msg as a text frame every interval, from connect on.
+// Heartbeat is an exchange's own text ping (Centrifugo's {} every 25 s), sent by the server
+// to every client from connect on.
+type Heartbeat struct {
+	Msg   []byte
+	Every time.Duration
+	// After each ping the client must send a message IsPong takes within PongTimeout, or
+	// the server closes the socket with CloseCode / CloseText. PongTimeout 0 = not checked.
+	PongTimeout time.Duration
+	IsPong      func(msg []byte) bool
+	CloseCode   int
+	CloseText   string
+}
+
+// Heartbeater is an exchange with a Heartbeat.
 type Heartbeater interface {
-	Heartbeat() (msg []byte, every time.Duration)
+	Heartbeat() Heartbeat
 }
 
 // Connector is an exchange that speaks first or keeps state per connection. The server

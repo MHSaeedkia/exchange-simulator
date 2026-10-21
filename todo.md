@@ -19,7 +19,7 @@
 - [x] bitpin (2) — built with unit tests on the shared `centrifugo` package; live check at the end
 - [x] nobitex/bitpin small real rules added (3501 closes, error 105, offset in the ack, bitpin price padding)
 - [x] wallex (3) — all real rules copied (user: exactly as real): open message, no replies, 51 subscribes per connection, PING 20 s / close after 30 s without PONG, close at 30 min; live check at the end
-- [ ] ramzinex (4)
+- [x] ramzinex (4) — WS + REST, its Centrifugo differences; the 3012 no-pong close added to all Centrifugo exchanges; live check at the end
 - [ ] bitget (5)
 - [ ] bybit (6)
 - [ ] ompfinex (7)

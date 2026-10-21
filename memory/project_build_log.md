@@ -134,3 +134,16 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
   Centrifugo ack's `offset` is exact. okx/wallex ignore seq (wallex passes nil).
 - bitpin pads prices to `Shape.PriceScale()` (= decimals of BASE_PRICE/PRICE_STEP), new accessor.
 - Verified: `go test -race ./...` green, server test for the 3501 close. NOT run live.
+
+# Step 5 — ramzinex (+ the Centrifugo pong rule for all three) (2026-10-21)
+
+- Probing ramzinex found the **3012 "no pong"** close; re-probed nobitex/bitpin: they do it
+  too (8 s). Added for all three: `exchange.Heartbeat` is now a struct (Msg, Every,
+  PongTimeout, IsPong, CloseCode/Text); the server marks a pong when IsPong(msg) on read and
+  checks it PongTimeout after each text ping.
+- `centrifugo.New(Options{Prefix, Version ("" = none), Epoch ("" = 8 letters), AnyNamespace,
+  PingEvery, PongTimeout})` — where the real servers differ.
+- **Server prefix routes**: an endpoint path ending in "/" serves every path under it
+  (longest prefix wins, exact first) — ramzinex's REST path has the market inside it.
+- ramzinex level metadata: el6 = 8 + fnv(price:qty)%83, el7 = now − fnv%25 min.
+- Verified: `go test -race ./...` green (server tests for 3012 and prefix routes). NOT live.
