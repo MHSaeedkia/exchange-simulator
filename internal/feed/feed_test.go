@@ -145,6 +145,21 @@ func TestSubscribeWithoutSnapshotSendsAckThenUpdates(t *testing.T) {
 	assert.Zero(t, f.Counters().Snapshots)
 }
 
+// An exchange that never answers (wallex) passes a nil ack: nothing is sent for it.
+func TestNilAckSendsNothing(t *testing.T) {
+	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 2}))
+	start(t, f)
+	s := newSub("c1")
+	f.Subscribe(s, "BTC-USDT", nil, false)
+	time.Sleep(40 * time.Millisecond)
+	f.Unsubscribe(s, "BTC-USDT", nil)
+	got := s.drain()
+	require.NotEmpty(t, got)
+	for _, fr := range got {
+		assert.Equal(t, okx.ActionUpdate, fr.Action, "no empty frame for the missing acks")
+	}
+}
+
 func TestUnsubscribeStopsTheMarket(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)

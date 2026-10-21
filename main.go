@@ -33,6 +33,7 @@ import (
 	"exchange-simulator/internal/exchange/bitpin"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
+	"exchange-simulator/internal/exchange/wallex"
 	"exchange-simulator/internal/feed"
 	"exchange-simulator/internal/httpapi"
 	"exchange-simulator/internal/kafka"
@@ -215,6 +216,8 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 		return nobitex.New(nobitex.Options{ID: e.ID, WS: e.WS}), nil
 	case "bitpin":
 		return bitpin.New(bitpin.Options{ID: e.ID, WS: e.WS}), nil
+	case "wallex":
+		return wallex.New(wallex.Options{ID: e.ID, WS: e.WS}), nil
 	}
 	return nil, fmt.Errorf("exchange %q has a config block but no implementation", e.Name)
 }
@@ -312,7 +315,8 @@ func serve(addr string, h http.Handler, log *slog.Logger) (*http.Server, string,
 }
 
 // refreshMarkets is kafka mode's market list for one exchange: re-read every DB_REFRESH_MS.
-// A failed read keeps the last list.
+// A failed read keeps the last list. A DB market that is several streams on the wire
+// (wallex: two channels) is sent as each of them.
 func refreshMarkets(ctx context.Context, repo *postgres.Repository, s *sim, cfg config.Config, log *slog.Logger) {
 	var last []string
 	ticker := time.NewTicker(cfg.DBRefresh)
@@ -325,7 +329,7 @@ func refreshMarkets(ctx context.Context, repo *postgres.Repository, s *sim, cfg 
 			if !slices.Equal(markets, last) {
 				log.Info("markets", "exchange", s.cfg.Name, "count", len(markets), "list", markets)
 			}
-			s.feed.SetMarkets(markets)
+			s.feed.SetMarkets(channels(s.ex, markets))
 			last = markets
 		}
 		select {
@@ -334,6 +338,18 @@ func refreshMarkets(ctx context.Context, repo *postgres.Repository, s *sim, cfg 
 		case <-ticker.C:
 		}
 	}
+}
+
+func channels(ex exchange.Exchange, markets []string) []string {
+	c, ok := ex.(exchange.Channeler)
+	if !ok {
+		return markets
+	}
+	var out []string
+	for _, m := range markets {
+		out = append(out, c.Channels(m)...)
+	}
+	return out
 }
 
 // sample feeds the report every interval. A sample can take a second or two (Docker

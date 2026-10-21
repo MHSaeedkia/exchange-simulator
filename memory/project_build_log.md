@@ -96,3 +96,26 @@ Verified: `go test -race ./...` green. NOT run live (user: live checks after all
 - `domain.Decimal.String()` added (prints all Scale decimals) for bitpin's `volume_*` sums.
 - Not copied: bitpin's 2-decimal price padding ("84150.00" → here "84150").
 - Verified: `go test -race ./...` green. NOT run live (live checks at the end).
+
+# Step 4 — wallex (2026-10-21)
+
+User: "i need 1, 2, 3 — this simulator should be exactly same as real" (ping/pong timeout,
+30-min cut, 51-subscribe limit). Facts in [[exchange-protocols]] § wallex. Decisions:
+
+- **Three optional contract parts** (okx/nobitex/bitpin untouched):
+  `exchange.Connector` (`Connect(s) func(msg)`: speaks first + per-connection state in a
+  closure, GC'd with the connection — the subscribe budget lives there);
+  `exchange.KeepaliveRules` → `Keepalive{PingEvery, PingPayload, PongTimeout, MaxLife}`
+  served by the server's write goroutine (control PING ticker, pong deadline timer reset from
+  an atomic last-PONG, life timer; closes are 1000); `exchange.Channeler` (kafka mode turns a
+  DB market into its wire streams).
+- **Pong timeout rule = no PONG for 30 s since connect or the last PONG.** Fits both
+  measurements (no PONG → closed at 30.0 s; with PONGs → lives to 30 min). An Engine.IO
+  "ping + pingTimeout" reading (close at 50 s) does NOT fit the 30.0 s measurement.
+- **A wallex channel is a feed market** (`BTCUSDT@buyDepth`, `BTCUSDT@sellDepth`): unsubscribing
+  one side stops only that side, as on real wallex. So RECORDS counts channel frames and the
+  report's markets count channels. Each frame = that side of the channel's book.
+- Feed: a **nil ack sends nothing** (wallex never answers).
+- `exchange.NewUUID` shared by centrifugo and wallex (kafka.NewID is the older copy, left alone).
+- Inferred, not measured: a well-formed subscribe to an invalid channel uses a place.
+- Verified: `go test -race ./...` green (server tests with ms-scale keepalive times). NOT run live.

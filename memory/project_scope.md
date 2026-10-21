@@ -40,6 +40,9 @@ metadata:
 - **Live checks after all exchanges (user, 2026-10-21):** "letls do all tests after all" —
   build the exchanges one after another with unit tests (TDD still holds), and run the live
   / NiFi checks for all of them at the end, not per exchange.
+- **"Exactly the same as real" (user, 2026-10-21, on wallex):** copy the real exchange's
+  connection rules too — wallex's 20 s PING / 30 s pong timeout, the 30-min cut and the
+  51-subscribe limit were all asked for. Apply the same standard to every exchange.
 - Runs **in Docker beside NiFi**.
 - lpa-core's `feat/load-generator` branch is kept; `Tibobit/crypto-mock-generator` (an older,
   Kafka-only mock with templates for 8 exchanges) is NOT touched and NOT replaced.

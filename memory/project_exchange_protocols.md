@@ -52,7 +52,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 
 - **nobitex (1)**: WS frame `{"push":{"channel":"public:orderbook-BTCUSDT","pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`, levels `[str,str]`, 24/side. Built in step 2 — see § nobitex below.
 - **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price`, `event_time`; 50 levels. Built in step 3 — see § bitpin below.
-- **wallex (3)**: first frame `{"sid":…,"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
+- **wallex (3)**: built in step 4 — see § wallex below. First frame `{"sid":…,"upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Subscribe NOT KNOWN.
 - **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Subscribe NOT KNOWN.
 - **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Subscribe `{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}` *(inferred)*.
@@ -148,3 +148,25 @@ Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
   every `:` and `,` inside `data` only (the envelope has none). 50 levels per side, bids first.
 - **`price` is now a STRING** (`"84300.00"`); the July sample had a number. Parser ignores it.
 - Prices padded to 2 decimals, quantities 8 decimals.
+
+### wallex (3) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `WALLEX`):** 10 sub-groups `wallex-group-N-socket-connection` (one
+ConnectWebSocket each, client id `#{wallex.web_socket.client_id}.N`, all on ONE
+JettyWebSocketClient → the same URL) + 10 `wallex-goup-N-subscription`. A market goes to
+connection **`id % 10`**. Per market TWO messages:
+**`["${status:replace('pending-', '')}", {"channel": "${market}@buyDepth"}]`** and the same
+with `@sellDepth` (note the spaces). On `connected`: `exchange_sockets.subscribes_used` reset
+to 2 × that socket's rows, state/session to Redis. On `disconnected`: that socket's
+`subscribe` rows → `pending-subscribe`. Text frames of all 10 → LookupAttribute →
+**ReplaceText `\]\s*$` → `, {"simulation": 0, "id": "${uuid}"} ]`** (3rd array element) →
+ex3-raw. `snapshot_request` dropped. No REST, no proxy.
+
+**Real wallex, measured from a dev Mac 2026-10-21** (adds to [[project-nifi-wallex-ws]]):
+- First frame `{"sid":"<uuid>","upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`.
+- **No reply at all** to subscribe, unsubscribe, unknown channel (`NOPEUSDT@buyDepth`, `BTCUSDT`),
+  or bad text (`hello`). Data starts ~0.15 s after a subscribe on an active market.
+- Frame `["BTCUSDT@sellDepth",[{"price":84356.47,"quantity":0.00035696,"sum":30.1118855312},…]]`:
+  **50 levels**, JSON numbers, no trailing zeros, no spaces, **sum = price × quantity exactly**
+  (50/50). ~2.9 KB. BTCUSDT: ~5 buy + ~2 sell frames per second.
+- Control PING payload `ping` at 20 s.

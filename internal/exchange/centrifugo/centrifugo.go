@@ -87,7 +87,7 @@ func (p *Protocol) OnMessage(s exchange.Session, msg []byte) {
 	switch {
 	case c.Connect != nil:
 		s.Send(mustJSON(reply{ID: c.ID, Connect: &connectReply{
-			Client: newUUID(), Version: p.version, Ping: int(p.pingEvery / time.Second), Pong: true,
+			Client: exchange.NewUUID(), Version: p.version, Ping: int(p.pingEvery / time.Second), Pong: true,
 		}}))
 	case c.Subscribe != nil:
 		market, ok := p.marketOf(c.Subscribe.Channel)
@@ -137,14 +137,6 @@ func errorReply(id uint32) []byte {
 func (p *Protocol) marketOf(ch string) (string, bool) {
 	m, ok := strings.CutPrefix(ch, p.prefix)
 	return m, ok && m != ""
-}
-
-func newUUID() string {
-	var b [16]byte
-	_, _ = rand.Read(b[:])
-	b[6] = b[6]&0x0f | 0x40
-	b[8] = b[8]&0x3f | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 func randomLetters(n int) string {

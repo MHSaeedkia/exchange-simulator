@@ -138,7 +138,7 @@ func (f *Feed) do(fn func()) {
 // whose every push is the whole book sends no snapshot here.
 func (f *Feed) Subscribe(s domain.Subscriber, market string, ack []byte, snapshot bool) {
 	f.do(func() {
-		if !s.Send(ack) {
+		if ack != nil && !s.Send(ack) {
 			return
 		}
 		if f.subs[market] == nil {
@@ -157,7 +157,9 @@ func (f *Feed) Unsubscribe(s domain.Subscriber, market string, ack []byte) {
 	f.do(func() {
 		delete(f.subs[market], s.ID())
 		f.refreshActive()
-		s.Send(ack)
+		if ack != nil {
+			s.Send(ack)
+		}
 	})
 }
 

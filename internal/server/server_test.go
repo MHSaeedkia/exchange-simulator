@@ -27,6 +27,7 @@ import (
 	"exchange-simulator/internal/domain"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
+	"exchange-simulator/internal/exchange/wallex"
 	"exchange-simulator/internal/feed"
 )
 
@@ -403,4 +404,87 @@ func TestHeartbeatIsSentFromConnect(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "{}", string(b))
 	}
+}
+
+// wallexServer serves a wallex whose keepalive times are short enough for a test.
+func wallexServer(t *testing.T, opts wallex.Options) (url string, header http.Header) {
+	t.Helper()
+	ws := domain.Endpoint{Host: "api.wallex.ir", Port: 443, Path: "/ws"}
+	opts.ID, opts.WS = 3, ws
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := wallex.New(opts)
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 50, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1},
+		Tick: time.Millisecond, Running: true, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 100, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	return "ws" + strings.TrimPrefix(srv.URL, "http") + ws.Path, http.Header{"Host": []string{ws.Host}}
+}
+
+// readUntilClosed reads (which also answers pings, unless the ping handler was replaced)
+// until the server closes, and returns the close code and when it came.
+func readUntilClosed(t *testing.T, c *websocket.Conn, limit time.Duration) (int, time.Duration) {
+	t.Helper()
+	start := time.Now()
+	require.NoError(t, c.SetReadDeadline(start.Add(limit)))
+	for {
+		if _, _, err := c.ReadMessage(); err != nil {
+			var ce *websocket.CloseError
+			require.ErrorAs(t, err, &ce, "the server must close, not the deadline")
+			return ce.Code, time.Since(start)
+		}
+	}
+}
+
+// Real wallex speaks first, and every connection has its own subscribe budget.
+func TestConnectorSpeaksFirst(t *testing.T) {
+	url, h := wallexServer(t, wallex.Options{})
+	c, _, err := websocket.DefaultDialer.Dial(url, h)
+	require.NoError(t, err)
+	defer c.Close()
+
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(time.Second)))
+	_, first, err := c.ReadMessage()
+	require.NoError(t, err)
+	assert.Contains(t, string(first), `"pingInterval":20000`)
+
+	send(t, c, `["subscribe", {"channel": "BTCUSDT@buyDepth"}]`)
+	_, b, err := c.ReadMessage()
+	require.NoError(t, err)
+	assert.True(t, strings.HasPrefix(string(b), `["BTCUSDT@buyDepth",[`), string(b))
+}
+
+// Real wallex closes (1000) a connection that sent no PONG for 30 s.
+func TestNoPongCloses(t *testing.T) {
+	url, h := wallexServer(t, wallex.Options{PingEvery: 20 * time.Millisecond, PongTimeout: 150 * time.Millisecond})
+	c, _, err := websocket.DefaultDialer.Dial(url, h)
+	require.NoError(t, err)
+	defer c.Close()
+	pings := 0
+	c.SetPingHandler(func(string) error { pings++; return nil }) // never answers
+
+	code, after := readUntilClosed(t, c, 2*time.Second)
+	assert.Equal(t, websocket.CloseNormalClosure, code)
+	assert.GreaterOrEqual(t, after, 140*time.Millisecond)
+	assert.Less(t, after, 400*time.Millisecond)
+	assert.Positive(t, pings, "control pings came")
+}
+
+// With PONGs the connection lives until its maximum life (30 min on real wallex), then is
+// closed (1000) whatever happens. NiFi's Jetty client answers PINGs by itself.
+func TestPongsKeepItOpenUntilMaxLife(t *testing.T) {
+	url, h := wallexServer(t, wallex.Options{PingEvery: 20 * time.Millisecond, PongTimeout: 100 * time.Millisecond, MaxLife: 400 * time.Millisecond})
+	c, _, err := websocket.DefaultDialer.Dial(url, h)
+	require.NoError(t, err)
+	defer c.Close()
+
+	code, after := readUntilClosed(t, c, 2*time.Second) // the default ping handler answers
+	assert.Equal(t, websocket.CloseNormalClosure, code)
+	assert.GreaterOrEqual(t, after, 380*time.Millisecond, "PONGs kept it open past the pong timeout")
+	assert.Less(t, after, 700*time.Millisecond)
 }

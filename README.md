@@ -13,8 +13,8 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1), bitpin (2). The others are added one by one:
-wallex (3), ramzinex (4), bitget (5), bybit (6), ompfinex (7), lbank (9).
+**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3). The others are added one
+by one: ramzinex (4), bitget (5), bybit (6), ompfinex (7), lbank (9).
 
 ## Run it
 
@@ -99,6 +99,24 @@ No REST. The same protocol and replies as nobitex (version `6.9.2 OSS`). Every p
 WHOLE book (50 levels), written as bitpin writes it, with spaces:
 `{"push":{"channel":…,"pub":{"data":{"bids": […], "asks": […], "volume_ask": …, "volume_bid": …, "symbol": …, "event": "market_data", "price": …, "event_time": "…Z"},"offset":N}}}`.
 
+### wallex (3)
+
+`wss://api.wallex.ir/ws`. No REST. Copies real wallex exactly:
+
+| When | Fake does |
+|---|---|
+| connect | sends `{"sid":…,"upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}` |
+| `["subscribe", {"channel": "BTCUSDT@buyDepth"}]` | no reply, no snapshot; that channel's frames start |
+| `["unsubscribe", {"channel": "BTCUSDT@buyDepth"}]` | no reply; that channel stops |
+| subscribe #52 on one connection | ignored, no reply (repeats count, unsubscribes do not) |
+| bad message | ignored |
+| every 20 s | control PING `ping` |
+| no PONG for 30 s | close 1000 |
+| 30 minutes after connect | close 1000, always |
+
+A frame is one channel's whole side: `["BTCUSDT@sellDepth",[{"price":84356.47,"quantity":0.00035696,"sum":30.1118855312},…]]`
+(numbers, `sum` = price × quantity). In kafka mode a DB market sends both channels.
+
 ## kafka mode
 
 Set `OUTPUT_MODE=kafka`. Each exchange sends every `exchange_markets` row of its id whose
@@ -147,6 +165,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
 | `internal/exchange/nobitex` | nobitex: its book frame |
 | `internal/exchange/bitpin` | bitpin: its book frame |
+| `internal/exchange/wallex` | wallex: side frames, the open message, the 51-subscribe budget, keepalive rules |
 | `internal/feed` | one generator per exchange: owns its books, keeps the rate, sends every frame in order |
 | `internal/server` | one listener per port, TLS, routing by host name + path, WebSocket connections |
 | `internal/certs` | the test CA and the server certificate |

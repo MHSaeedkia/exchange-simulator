@@ -192,16 +192,29 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		id: connID(), ws: ws, feed: feed,
 		queue: make(chan []byte, s.opts.SendBuffer), done: make(chan struct{}),
 	}
+	if k, ok := ex.(exchange.KeepaliveRules); ok {
+		ka := k.Keepalive()
+		c.keepalive = &ka
+		c.lastPong.Store(time.Now().UnixNano())
+		ws.SetPongHandler(func(string) error {
+			c.lastPong.Store(time.Now().UnixNano())
+			return nil
+		})
+	}
 	count.Add(1)
 	s.log.Info("websocket connected", "exchange", ex.Name(), "conn", c.id, "remote", r.RemoteAddr)
 
 	go s.write(c, ex)
+	onMessage := func(msg []byte) { ex.OnMessage(c, msg) }
+	if cx, ok := ex.(exchange.Connector); ok {
+		onMessage = cx.Connect(c)
+	}
 	for {
 		_, msg, err := ws.ReadMessage()
 		if err != nil {
 			break
 		}
-		ex.OnMessage(c, msg)
+		onMessage(msg)
 	}
 
 	c.close()
@@ -210,10 +223,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 	s.log.Info("websocket disconnected", "exchange", ex.Name(), "conn", c.id)
 }
 
-// write is the connection's only writer: queued frames, and the exchange's own ping when
-// it has one (not counted as a delivery: it is not market data).
+// write is the connection's only writer: queued frames, the exchange's own text ping
+// (Heartbeater) and its keepalive (control pings, and the closes its rules call for). Pings
+// are not counted as deliveries: they are not market data.
 func (s *Server) write(c *conn, ex exchange.Exchange) {
-	var beat <-chan time.Time
+	var beat, ping, pongCheck, life <-chan time.Time
 	var beatMsg []byte
 	if h, ok := ex.(exchange.Heartbeater); ok {
 		msg, every := h.Heartbeat()
@@ -221,17 +235,43 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 		defer ticker.Stop()
 		beat, beatMsg = ticker.C, msg
 	}
+	var pongTimer *time.Timer
+	if k := c.keepalive; k != nil {
+		ticker := time.NewTicker(k.PingEvery)
+		defer ticker.Stop()
+		pongTimer = time.NewTimer(k.PongTimeout)
+		defer pongTimer.Stop()
+		ping, pongCheck = ticker.C, pongTimer.C
+		if k.MaxLife > 0 {
+			lifeTimer := time.NewTimer(k.MaxLife)
+			defer lifeTimer.Stop()
+			life = lifeTimer.C
+		}
+	}
 	for {
-		var msg []byte
+		kind, msg := websocket.TextMessage, []byte(nil)
 		select {
 		case <-c.done:
 			return
 		case msg = <-c.queue:
 		case <-beat:
 			msg = beatMsg
+		case <-ping:
+			kind, msg = websocket.PingMessage, c.keepalive.PingPayload
+		case now := <-pongCheck:
+			last := time.Unix(0, c.lastPong.Load())
+			if wait := last.Add(c.keepalive.PongTimeout).Sub(now); wait > 0 {
+				pongTimer.Reset(wait)
+				continue
+			}
+			s.closeNormal(c, ex, "no pong")
+			return
+		case <-life:
+			s.closeNormal(c, ex, "connection lifetime reached")
+			return
 		}
 		_ = c.ws.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
-		if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+		if err := c.ws.WriteMessage(kind, msg); err != nil {
 			c.feed.SendError()
 			s.log.Warn("websocket write failed, closing", "exchange", ex.Name(), "conn", c.id, "err", err)
 			c.close()
@@ -240,17 +280,27 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 	}
 }
 
+// closeNormal ends a connection the way the exchange's own rules do: a normal close (1000).
+func (s *Server) closeNormal(c *conn, ex exchange.Exchange, reason string) {
+	_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(s.opts.WriteTimeout))
+	s.log.Info("websocket closed by the exchange's rules", "exchange", ex.Name(), "conn", c.id, "reason", reason)
+	c.close()
+}
+
 func key(host, path string) string { return strings.ToLower(host) + path }
 
 // conn is one WebSocket client. Only its write goroutine writes to the socket; everything
 // else queues. It is both the exchange's Session and the feed's Subscriber.
 type conn struct {
-	id    string
-	ws    *websocket.Conn
-	feed  Feed
-	queue chan []byte
-	done  chan struct{}
-	once  sync.Once
+	id        string
+	ws        *websocket.Conn
+	feed      Feed
+	queue     chan []byte
+	done      chan struct{}
+	once      sync.Once
+	keepalive *exchange.Keepalive // nil = the exchange has none
+	lastPong  atomic.Int64        // unix nanos of connect or the last PONG
 }
 
 func (c *conn) ID() string { return c.id }

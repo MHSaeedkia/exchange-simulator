@@ -170,6 +170,15 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.01", qtyMin: "0.00000001", qtyMax: "0.20000000",
 		seqStart: "3000000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
 	},
+	{
+		name: "wallex", id: "3",
+		wsHost: "api.wallex.ir", wsPort: "443", wsPath: "/ws",
+		// No REST: NiFi's live WALLEX group makes no REST call.
+		// A market is two channels (@buyDepth, @sellDepth); RECORDS counts channel frames.
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // wallex sends one whole side, 50 levels
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.00000001", qtyMax: "0.20000000",
+		seqStart: "1", seqStepMin: "1", seqStepMax: "1", // no sequence on the wire
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

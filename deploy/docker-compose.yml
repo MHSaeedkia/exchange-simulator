@@ -39,6 +39,7 @@ services:
           - ${OKX_REST_HOST:-www.okx.com}
           - ${NOBITEX_WS_HOST:-ws.nobitex.ir}
           - ${BITPIN_WS_HOST:-centrifugo.bitpin.ir}
+          - ${WALLEX_WS_HOST:-api.wallex.ir}
 
 networks:
   lpa:
