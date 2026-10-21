@@ -239,3 +239,11 @@ of 8 exchanges without touching the DB; okx separately with `subscribe`.)
   stays false). Kafka's prod heap is a fixed 2 GB. Each Kafka restart recovers 4912 logs.
 - NiFi left as configured for the test (flow imported, CA in cacerts, proxy param pointing at
   the simulator, 18 rows `subscribe`, `exchange_sockets` added).
+
+# Restart fix: sequence numbers start from the clock (2026-10-21, user chose it)
+
+`domain.ClockSeqStart(base, stepMax, now) = base + ms since 2026-01-01 × stepMax`; main passes
+it as each feed's SeqStart (both modes). A later run starts above anything an earlier run could
+reach unless one market ran > 1000 frames/s. Stays < 2^53 (exact for JSON-double readers) for
+~20 years even with bitget's 12000 step. SEQ_START is now the BASE. Not covered: ompfinex's
+Centrifugo offset counter restarts at its constant (the parser orders on u, not offset).

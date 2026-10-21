@@ -2,6 +2,7 @@ package domain
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -39,4 +40,18 @@ func TestCountersSub(t *testing.T) {
 func TestEndpointURL(t *testing.T) {
 	e := Endpoint{Host: "ws.okx.com", Port: 8443, Path: "/ws/v5/public"}
 	assert.Equal(t, "wss://ws.okx.com:8443/ws/v5/public", e.URL("wss"))
+}
+
+// A run started later must start every book above anything an earlier run could reach, or
+// lpa-core (whose state outlives the simulator) rejects the new frames as stale.
+func TestClockSeqStartMovesForwardWithTime(t *testing.T) {
+	t0 := time.Date(2026, 10, 21, 20, 0, 0, 0, time.UTC)
+	a := ClockSeqStart(1000, 100, t0)
+	b := ClockSeqStart(1000, 100, t0.Add(10*time.Second))
+	assert.Greater(t, a, int64(1000))
+	// 10 s of an earlier run at up to 1000 frames/s on one market, each step at most 100:
+	assert.Greater(t, b, a+10*1000*100-1, "a later start is above what 10 s at 1000/s could reach")
+	assert.Equal(t, int64(1000), ClockSeqStart(1000, 100, SeqEpoch), "SEQ_START at the epoch")
+	// Stays exact for JSON readers that use doubles, for decades, with bitget's 12000 step.
+	assert.Less(t, ClockSeqStart(941000000000, 12000, time.Date(2046, 1, 1, 0, 0, 0, 0, time.UTC)), int64(1)<<53)
 }

@@ -29,6 +29,7 @@ import (
 
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/config"
+	"exchange-simulator/internal/domain"
 	"exchange-simulator/internal/exchange"
 	"exchange-simulator/internal/exchange/bitget"
 	"exchange-simulator/internal/exchange/bitpin"
@@ -130,8 +131,10 @@ func run(envFile string, genCerts bool, log *slog.Logger) error {
 			pub = kafkaPublisher{p: producer, topic: cfg.Topic(s.cfg.ID), ex: s.ex, simulation: cfg.Simulation}
 		}
 		s.feed = feed.New(feed.Options{
-			Encoder: s.ex, Shape: s.cfg.Shape, Settings: s.cfg.Defaults, SeqStart: s.cfg.SeqStart,
-			Tick: cfg.Tick, Running: slices.Contains(cfg.Running, s.cfg.Name), Publisher: pub,
+			Encoder: s.ex, Shape: s.cfg.Shape, Settings: s.cfg.Defaults,
+			// From the clock: lpa-core keeps the last number it took across our restarts.
+			SeqStart: domain.ClockSeqStart(s.cfg.SeqStart, s.cfg.SeqStepMax, time.Now()),
+			Tick:     cfg.Tick, Running: slices.Contains(cfg.Running, s.cfg.Name), Publisher: pub,
 			Seed: time.Now().UnixNano() + int64(i),
 		})
 		go s.feed.Run(feedCtx)

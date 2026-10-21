@@ -32,7 +32,7 @@ For each: a block in `config.known` + `.env.example` + an alias line in `deploy/
 - [x] Kafka mode against real Kafka + Flink: all 9, 0 rejects
 - [x] Image build, DNS aliases, CA in NiFi cacerts, flow import, proxy param, all 9 connected + subscribed through real NiFi
 - [ ] Clean NiFi run measurement (blocked: Docker VM 8 GB → OOM kills of Kafka/taskmanager; user to raise memory or accept smaller Kafka heap)
-- [ ] Decide: simulator restart vs Flink state (books restart at SEQ_START → stale_or_duplicate burst)
+- [x] Simulator restart vs Flink state: books start from the clock (SEQ_START + ms since 2026 × step)
 - [ ] Decide the `EXCHANGES_RUNNING` default (today `okx` only: the others start stopped)
 - [ ] Tell lpa-core (user's call): real lbank `TS` is UTC+8 but LBankParser reads it as UTC → ex9 event times 8 h ahead
 - [ ] Tell NiFi owner (user's call): LBANK ConnectWebSocket uses BITGET's client id; lbank's 59-byte ack is echoed back by the ≤60-byte ping path

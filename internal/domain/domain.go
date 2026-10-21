@@ -6,6 +6,7 @@ package domain
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // Endpoint is one address a real exchange serves and the simulator answers on instead:
@@ -90,4 +91,16 @@ type Subscriber interface {
 	// Send queues msg. It blocks while the queue is full and returns false once
 	// the subscriber is gone.
 	Send(msg []byte) bool
+}
+
+// SeqEpoch is the zero of ClockSeqStart.
+var SeqEpoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// ClockSeqStart is the sequence number a new book starts at: base plus the milliseconds since
+// SeqEpoch times the largest step. lpa-core's state outlives a simulator run, and it rejects a
+// frame whose number is not above the last it took; starting from the clock puts a new run
+// above anything an earlier run reached, as long as no market ran faster than 1000 frames a
+// second. For 20 years even bitget's 12000 step stays below 2^53, exact for double readers.
+func ClockSeqStart(base, stepMax int64, now time.Time) int64 {
+	return base + now.Sub(SeqEpoch).Milliseconds()*stepMax
 }
