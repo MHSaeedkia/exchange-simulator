@@ -42,7 +42,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 | 2 | bitpin | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://centrifugo.bitpin.ir/connection/websocket` | `BTC_USDT` (underscore, REST `pair` must match) | WS `pub.offset`, jump 0; REST null | WS ISO string, REST epoch ms number |
 | 3 | wallex | WS only; each frame = full snapshot of ONE side | `wss://api.wallex.ir/ws` | `BTCUSDT` (`BTCUSDT@buyDepth` / `@sellDepth`) | none (null) | none (processing time) |
 | 4 | ramzinex | WS Centrifugo, full snapshot both sides (+ a REST branch NiFi never uses today) | `wss://websocket.ramzinex.com/websocket` | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
-| 5 | bitget | WS `books50`, snapshot only | NOT KNOWN | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
+| 5 | bitget | WS `books50`, snapshot only | `wss://ws.bitget.com/v2/ws/public` | `BTCUSDT` (`arg.instId`) | `data[i].seq` (int), jump 0 | inner `ts` string ms |
 | 6 | bybit | WS `orderbook.50.{sym}` snapshot+delta, REST `/v5/market/orderbook` | WS `wss://stream.bybit.com/v5/public/spot` *(measured directly, NiFi use inferred)* | `BTCUSDT` (`data.s` / `result.s`) | WS `data.u`, jump 1; snapshot with `u==1` = restart (null); REST null | `cts` |
 | 7 | ompfinex | REST snapshot + Centrifugo WS delta (NO captures, shapes from the parser only) | NOT KNOWN | numeric `14` (channel `public-market:r-depth-14`) | REST `data.lastUpdateId`, jump 0; WS `u`, jump `u−U` | REST `data.time` µs ÷ 1000; WS processing time |
 | 8 | okx | WS `books` snapshot+update, REST snapshot | WS `wss://ws.okx.com:8443/ws/v5/public`; REST `https://www.okx.com/api/v5/market/books` — both through the proxy | `BTC-USDT` (`arg.instId`) | `seqId`, jump `seqId−prevSeqId`; snapshot jump 0; REST null | `ts` string ms |
@@ -54,7 +54,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 - **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price`, `event_time`; 50 levels. Built in step 3 — see § bitpin below.
 - **wallex (3)**: built in step 4 — see § wallex below. First frame `{"sid":…,"upgrades":[],"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Built in step 5 — see § ramzinex below.
-- **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Subscribe NOT KNOWN.
+- **bitget (5)**: `{"action":"snapshot","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"},"data":[{asks,bids,"ts":"…","seq":N,"pseq":0}],"ts":N}`. A snapshot answer must be a resubscribe (a REST body would be dropped). Built in step 6 — see § bitget below.
 - **bybit (6)**: `{"topic":"orderbook.50.BTCUSDT","ts":…,"type":"snapshot|delta","data":{"s","b","a","u","seq"},"cts":…}`; an unchanged side on a delta is `[]`. More than 10 args in one subscribe → `{"success":false,"ret_msg":"args size >10"}` and then NOTHING. REST body under `result`. Subscribe `{"op":"subscribe","args":["orderbook.50.BTCUSDT"]}` *(inferred)*.
 - **ompfinex (7)**: REST `{"status":"OK","action":"snapshot","pair":"14","data":{"lastUpdateId":N,"time":µs,"bids","asks"}}`; WS `data.U`, `data.u`, `a`, `b`, qty `"0"` = delete. Subscribe NOT KNOWN.
 - **okx (8)**: built in step 1 (from the okx-only version). Subscribe/unsubscribe `{"op":"subscribe|unsubscribe","args":[{"channel":"books","instId":"BTC-USDT"}]}`; ack `{"event":"subscribe","arg":{…},"connId":…}`; errors 60012 / 60018; text `ping` → `pong`. Frame `{"arg":{…},"action":"snapshot|update","data":[{asks,bids,ts,checksum,prevSeqId,seqId}]}`, 4-element levels, 400 levels on a snapshot. REST `{"code":"0","msg":"","data":[{asks,bids,ts,seqId}]}`.
@@ -206,3 +206,25 @@ RamzinexParser has no REST branch (such a body would be dropped).
   other order); el6 8…90 (meaning unknown); el7 per-level epoch ms, up to ~25 min old.
 - REST 200: `{"data":{"buys":[…],"sells":[…]},"status":0}` (same arrays); unknown market →
   **400 `{"error":"Order book not found for pair_id"}`** (the simulator has every market: not copied).
+
+### bitget (5) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `BITGET`):** subscribe/unsubscribe
+**`{"op":"${status:replace('pending-', '')}","args":[{"channel":"books50","instType":"SPOT","instId":"${market}"}]}`**.
+**NiFi sends NO ping** (and drops ≤10-byte frames, i.e. `pong`). On `disconnected`: rows →
+`pending-subscribe`. `snapshot_request` dropped. No REST, no proxy.
+
+**Real bitget (probed from a dev Mac):**
+- ack per arg `{"event":"subscribe","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"}}`
+  (arg keys reordered); repeat subscribe → acked again; unsubscribe of a market not subscribed → acked.
+- unknown instId → `{"event":"error","arg":{…},"code":30001,"msg":"instType:SPOT,channel:books50,instId:NOPEUSDT,precision:null doesn't exist","op":"subscribe"}` (not copied: every market exists here);
+  other channel → `…"code":30016,"msg":"Param error","op":"subscribe"}`; text it cannot read
+  (`hello`, `{"op":"login"}`) → `{"event":"error","code":30002,"msg":"Unrecognized request:<text>"}`;
+  `{"op":"subscribe","args":[]}` → nothing; `ping` → `pong`.
+- frames ~8/s on BTCUSDT, first one on the normal beat after the ack; 50/50 levels; quantities
+  without trailing zeros; outer `ts` = inner + 2 ms.
+- **Idle cut: no `ping` for ~2 min → TCP dropped, no close frame (1006).** Cut at 126 s and
+  129.5 s after connect with no ping (a subscribe at 60 s did NOT reset it), and 145 s after a
+  ping at 60 s (205 s). Modelled as: limit 120 s, checked every 30 s from a random phase.
+  **Consequence: real bitget cuts NiFi's connection about every 2 minutes** (NiFi never pings);
+  NiFi reconnects and resubscribes.

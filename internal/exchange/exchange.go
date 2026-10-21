@@ -109,6 +109,20 @@ type KeepaliveRules interface {
 	Keepalive() Keepalive
 }
 
+// Idle is a server rule that drops a quiet client: when the client sent no message IsAlive
+// takes for Limit, the TCP connection is cut with no close frame. The server looks every
+// Check, starting at a random point, as a periodic sweep on a real server does.
+type Idle struct {
+	Limit   time.Duration
+	Check   time.Duration
+	IsAlive func(msg []byte) bool
+}
+
+// IdleRules is an exchange with an Idle rule.
+type IdleRules interface {
+	Idle() Idle
+}
+
 // Channeler is an exchange whose market in the database is more than one stream on the
 // wire (wallex: BTCUSDT is BTCUSDT@buyDepth and BTCUSDT@sellDepth). Kafka mode sends each.
 type Channeler interface {

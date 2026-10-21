@@ -147,3 +147,13 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
   (longest prefix wins, exact first) — ramzinex's REST path has the market inside it.
 - ramzinex level metadata: el6 = 8 + fnv(price:qty)%83, el7 = now − fnv%25 min.
 - Verified: `go test -race ./...` green (server tests for 3012 and prefix routes). NOT live.
+
+# Step 6 — bitget (2026-10-21)
+
+- **Optional `exchange.IdleRules` → `Idle{Limit, Check, IsAlive}`**: the server marks a client
+  alive when IsAlive(msg) on read and sweeps every Check from a random first phase; a quiet
+  client is dropped with `c.close()` (TCP cut, no close frame) — real bitget's 2-min rule.
+- `subscribe` passes snapshot=false: every books50 frame is a whole snapshot, and a snapshot
+  to one new subscriber at the current seq would repeat a seq other subscribers already saw.
+- Replies built with a non-HTML-escaping JSON encoder (bitget's error msg echoes raw text).
+- Verified: `go test -race ./...` green (server tests for the idle cut and ping keeping it open). NOT live.

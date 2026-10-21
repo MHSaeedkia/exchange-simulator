@@ -30,6 +30,7 @@ import (
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/config"
 	"exchange-simulator/internal/exchange"
+	"exchange-simulator/internal/exchange/bitget"
 	"exchange-simulator/internal/exchange/bitpin"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
@@ -219,6 +220,8 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 		return bitpin.New(bitpin.Options{ID: e.ID, WS: e.WS, PriceDecimals: e.Shape.PriceScale()}), nil
 	case "wallex":
 		return wallex.New(wallex.Options{ID: e.ID, WS: e.WS}), nil
+	case "bitget":
+		return bitget.New(bitget.Options{ID: e.ID, WS: e.WS, StepMin: e.SeqStepMin, StepMax: e.SeqStepMax}), nil
 	case "ramzinex":
 		return ramzinex.New(ramzinex.Options{ID: e.ID, WS: e.WS, REST: e.REST}), nil
 	}

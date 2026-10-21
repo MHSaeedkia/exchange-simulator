@@ -42,6 +42,7 @@ services:
           - ${WALLEX_WS_HOST:-api.wallex.ir}
           - ${RAMZINEX_WS_HOST:-websocket.ramzinex.com}
           - ${RAMZINEX_REST_HOST:-publicapi.ramzinex.com}
+          - ${BITGET_WS_HOST:-ws.bitget.com}
 
 networks:
   lpa:

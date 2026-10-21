@@ -25,6 +25,7 @@ import (
 
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/domain"
+	"exchange-simulator/internal/exchange/bitget"
 	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
 	"exchange-simulator/internal/exchange/ramzinex"
@@ -597,4 +598,68 @@ func TestRestPrefixRoute(t *testing.T) {
 	assert.Equal(t, int64(1), f.Counters().RestCalls)
 	assert.Equal(t, http.StatusNotFound, get(rest.Host, "/other/12/buys_sells"))
 	assert.Equal(t, http.StatusNotFound, get("api.wallex.ir", rest.Path+"12/buys_sells"), "the host still counts")
+}
+
+// bitgetClient dials a bitget whose idle times are short enough for a test.
+func bitgetClient(t *testing.T, opts bitget.Options) *websocket.Conn {
+	t.Helper()
+	ws := domain.Endpoint{Host: "ws.bitget.com", Port: 443, Path: "/v2/ws/public"}
+	opts.ID, opts.WS, opts.StepMin, opts.StepMax = 5, ws, 1, 1
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := bitget.New(opts)
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+ws.Path, http.Header{"Host": []string{ws.Host}})
+	require.NoError(t, err)
+	t.Cleanup(func() { c.Close() })
+	return c
+}
+
+// Real bitget drops a client that sent no "ping" for 2 minutes: no close frame (1006).
+// NiFi never pings, so NiFi is cut and reconnects, as on the real exchange.
+func TestIdleClientIsDropped(t *testing.T) {
+	c := bitgetClient(t, bitget.Options{IdleLimit: 100 * time.Millisecond, IdleCheck: 20 * time.Millisecond})
+	send(t, c, `{"op":"subscribe","args":[{"channel":"books50","instType":"SPOT","instId":"BTCUSDT"}]}`)
+	start := time.Now()
+	require.NoError(t, c.SetReadDeadline(start.Add(2*time.Second)))
+	var err error
+	for err == nil {
+		_, _, err = c.ReadMessage()
+	}
+	var ce *websocket.CloseError
+	require.ErrorAs(t, err, &ce, "not the read deadline")
+	assert.Equal(t, websocket.CloseAbnormalClosure, ce.Code, "a TCP cut, no close frame")
+	assert.GreaterOrEqual(t, time.Since(start), 90*time.Millisecond)
+	assert.Less(t, time.Since(start), 500*time.Millisecond)
+}
+
+func TestPingKeepsItOpen(t *testing.T) {
+	c := bitgetClient(t, bitget.Options{IdleLimit: 100 * time.Millisecond, IdleCheck: 20 * time.Millisecond})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 12 {
+			if c.WriteMessage(websocket.TextMessage, []byte("ping")) != nil {
+				return
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	}()
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(2*time.Second)))
+	pongs := 0
+	for pongs < 12 {
+		_, b, err := c.ReadMessage()
+		require.NoError(t, err, "still open after %d pongs", pongs)
+		if string(b) == "pong" {
+			pongs++
+		}
+	}
+	<-done
 }

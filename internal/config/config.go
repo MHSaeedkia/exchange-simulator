@@ -188,6 +188,14 @@ var known = []block{
 		basePrice: "84000", priceStep: "0.01", qtyMin: "0.0000010", qtyMax: "0.0200000",
 		seqStart: "1900000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
 	},
+	{
+		name: "bitget", id: "5",
+		wsHost: "ws.bitget.com", wsPort: "443", wsPath: "/v2/ws/public",
+		// No REST: NiFi's live BITGET group makes no REST call.
+		records: "100", periodMS: "1000", bookDepth: "50", updateLevels: "5", // books50: the whole book on every frame
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.000001", qtyMax: "0.600000",
+		seqStart: "941000000000", seqStepMin: "2000", seqStepMax: "12000", // a sampled book counter: steps of thousands
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

@@ -13,8 +13,8 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4). The others
-are added one by one: bitget (5), bybit (6), ompfinex (7), lbank (9).
+**Exchanges so far:** okx (8), nobitex (1), bitpin (2), wallex (3), ramzinex (4), bitget (5).
+The others are added one by one: bybit (6), ompfinex (7), lbank (9).
 
 ## Run it
 
@@ -113,6 +113,22 @@ the WHOLE book, both sides price-descending:
 REST: `GET https://publicapi.ramzinex.com/exchange/api/v1.0/exchange/orderbooks/12/buys_sells` →
 `{"data":{"buys":[…],"sells":[…]},"status":0}`.
 
+### bitget (5)
+
+`wss://ws.bitget.com/v2/ws/public`, channel `books50`. No REST.
+
+| Client sends | Fake answers |
+|---|---|
+| `{"op":"subscribe","args":[{"channel":"books50","instType":"SPOT","instId":"BTCUSDT"}]}` | `{"event":"subscribe","arg":{"instType":"SPOT","channel":"books50","instId":"BTCUSDT"}}` per arg, then frames (no extra snapshot) |
+| `{"op":"unsubscribe",…}` | `{"event":"unsubscribe","arg":{…}}`; that market stops |
+| `ping` | `pong` |
+| text it cannot read | `{"event":"error","code":30002,"msg":"Unrecognized request:…"}` |
+| another channel | `{"event":"error","arg":{…},"code":30016,"msg":"Param error","op":"subscribe"}` |
+| no `ping` for 2 minutes | dropped, no close frame |
+
+Every frame is the whole book: `{"action":"snapshot","arg":{…},"data":[{"asks":[…],"bids":[…],"ts":"…","seq":N,"pseq":0}],"ts":…}`;
+`seq` moves by thousands (`BITGET_SEQ_STEP_MIN`…`MAX`).
+
 ### wallex (3)
 
 `wss://api.wallex.ir/ws`. No REST. Copies real wallex exactly:
@@ -178,6 +194,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
 | `internal/exchange/centrifugo` | the Centrifugo protocol shared by nobitex and bitpin: connect, subscribe, ping, push envelope |
 | `internal/exchange/nobitex` | nobitex: its book frame |
+| `internal/exchange/bitget` | bitget: books50 frames, replies, the idle cut |
 | `internal/exchange/bitpin` | bitpin: its book frame |
 | `internal/exchange/ramzinex` | ramzinex: its book frame and REST order book |
 | `internal/exchange/wallex` | wallex: side frames, the open message, the 51-subscribe budget, keepalive rules |

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	mrand "math/rand/v2"
 	"net"
 	"net/http"
 	"sort"
@@ -216,6 +217,11 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		hb := h.Heartbeat()
 		c.heartbeat = &hb
 	}
+	if i, ok := ex.(exchange.IdleRules); ok {
+		idle := i.Idle()
+		c.idle = &idle
+		c.lastAlive.Store(time.Now().UnixNano())
+	}
 	if k, ok := ex.(exchange.KeepaliveRules); ok {
 		ka := k.Keepalive()
 		c.keepalive = &ka
@@ -241,6 +247,9 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 		if c.heartbeat != nil && c.heartbeat.IsPong != nil && c.heartbeat.IsPong(msg) {
 			c.lastPong.Store(time.Now().UnixNano())
 		}
+		if c.idle != nil && c.idle.IsAlive(msg) {
+			c.lastAlive.Store(time.Now().UnixNano())
+		}
 		onMessage(msg)
 	}
 
@@ -254,7 +263,7 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 // (Heartbeater) and its keepalive (control pings, and the closes its rules call for). Pings
 // are not counted as deliveries: they are not market data.
 func (s *Server) write(c *conn, ex exchange.Exchange) {
-	var beat, beatCheck, ping, pongCheck, life <-chan time.Time
+	var beat, beatCheck, ping, pongCheck, life, idleCheck <-chan time.Time
 	var beatAt int64 // unix nanos of the text ping whose answer is awaited
 	if hb := c.heartbeat; hb != nil {
 		ticker := time.NewTicker(hb.Every)
@@ -273,6 +282,12 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 			defer lifeTimer.Stop()
 			life = lifeTimer.C
 		}
+	}
+	var idleTimer *time.Timer
+	if i := c.idle; i != nil {
+		idleTimer = time.NewTimer(time.Duration(mrand.Int64N(int64(i.Check))) + 1) // the sweep's random phase
+		defer idleTimer.Stop()
+		idleCheck = idleTimer.C
 	}
 	for {
 		kind, msg := websocket.TextMessage, []byte(nil)
@@ -305,6 +320,14 @@ func (s *Server) write(c *conn, ex exchange.Exchange) {
 		case <-life:
 			s.closeWith(c, ex, websocket.CloseNormalClosure, "")
 			return
+		case now := <-idleCheck:
+			if now.Sub(time.Unix(0, c.lastAlive.Load())) >= c.idle.Limit {
+				s.log.Info("websocket dropped: idle client", "exchange", ex.Name(), "conn", c.id)
+				c.close() // a TCP cut with no close frame, as the real server does
+				return
+			}
+			idleTimer.Reset(c.idle.Check)
+			continue
 		}
 		_ = c.ws.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
 		if err := c.ws.WriteMessage(kind, msg); err != nil {
@@ -335,6 +358,8 @@ type conn struct {
 	once      sync.Once
 	heartbeat *exchange.Heartbeat // nil = the exchange has none
 	keepalive *exchange.Keepalive // nil = the exchange has none
+	idle      *exchange.Idle      // nil = the exchange has none
+	lastAlive atomic.Int64        // unix nanos of connect or the last message idle.IsAlive took
 	lastPong  atomic.Int64        // unix nanos of connect or the last pong (control PONG or the heartbeat's answer)
 }
 

@@ -67,7 +67,7 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.True(t, okx.HasREST)
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
 	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir", "api.wallex.ir",
-		"websocket.ramzinex.com", "publicapi.ramzinex.com"}, cfg.Hosts())
+		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com"}, cfg.Hosts())
 
 	nobitex, ok := cfg.Exchange("nobitex")
 	require.True(t, ok)
@@ -101,6 +101,15 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 		"NiFi's snapshot branch: …/orderbooks/${pair}/buys_sells")
 	assert.True(t, ramzinex.HasREST)
 	assert.Equal(t, 50, ramzinex.Defaults.BookDepth)
+
+	bitget, ok := cfg.Exchange("bitget")
+	require.True(t, ok)
+	assert.Equal(t, int64(5), bitget.ID)
+	assert.Equal(t, domain.Endpoint{Host: "ws.bitget.com", Port: 443, Path: "/v2/ws/public"}, bitget.WS, "the REAL address")
+	assert.False(t, bitget.HasREST, "NiFi's BITGET group makes no REST call")
+	assert.Equal(t, 50, bitget.Defaults.BookDepth, "books50")
+	assert.Equal(t, int64(2000), bitget.SeqStepMin, "seq steps by thousands (2816…11122 seen)")
+	assert.Equal(t, int64(12000), bitget.SeqStepMax)
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {
