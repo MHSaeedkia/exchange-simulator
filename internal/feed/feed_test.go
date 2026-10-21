@@ -34,6 +34,9 @@ func (s *sub) drain() (out []frame) {
 	}
 }
 
+// ackOf is a fixed ack, whatever the sequence number.
+func ackOf(b []byte) func(int64) []byte { return func(int64) []byte { return b } }
+
 // pub is a Publisher that keeps everything it is sent.
 type pub struct {
 	mu     sync.Mutex
@@ -109,7 +112,7 @@ func TestSubscribeSendsAckThenSnapshotThenUpdates(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 
-	f.Subscribe(s, "BTC-USDT", okx.Ack("", okx.OpSubscribe, okx.Arg{Channel: okx.Channel, InstID: "BTC-USDT"}, "c1"), true)
+	f.Subscribe(s, "BTC-USDT", ackOf(okx.Ack("", okx.OpSubscribe, okx.Arg{Channel: okx.Channel, InstID: "BTC-USDT"}, "c1")), true)
 	time.Sleep(60 * time.Millisecond)
 	got := s.drain()
 
@@ -133,7 +136,7 @@ func TestSubscribeWithoutSnapshotSendsAckThenUpdates(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), false)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), false)
 	time.Sleep(60 * time.Millisecond)
 	got := s.drain()
 
@@ -160,11 +163,21 @@ func TestNilAckSendsNothing(t *testing.T) {
 	}
 }
 
+// An ack may name the market's current sequence number (a Centrifugo subscribe reply does).
+func TestAckGetsTheCurrentSequenceNumber(t *testing.T) {
+	f := New(options(t, domain.Settings{Records: 0, PeriodMS: 10, BookDepth: 5, UpdateLevels: 2}))
+	start(t, f)
+	s := newSub("c1")
+	var got int64
+	f.Subscribe(s, "BTC-USDT", func(seq int64) []byte { got = seq; return []byte(`{}`) }, false)
+	assert.Equal(t, int64(1000), got, "SeqStart: the book is new")
+}
+
 func TestUnsubscribeStopsTheMarket(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(30 * time.Millisecond)
 
 	f.Unsubscribe(s, "BTC-USDT", []byte(`{"event":"unsubscribe"}`))
@@ -180,10 +193,10 @@ func TestALateSubscriberJoinsTheSameChain(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	early, late := newSub("early"), newSub("late")
-	f.Subscribe(early, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(early, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(30 * time.Millisecond)
 
-	f.Subscribe(late, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(late, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(30 * time.Millisecond)
 
 	got := late.drain()
@@ -197,7 +210,7 @@ func TestRateIsSharedByAllMarkets(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 	for _, m := range []string{"A-USDT", "B-USDT"} {
-		f.Subscribe(s, m, []byte(`{"event":"subscribe"}`), true)
+		f.Subscribe(s, m, ackOf([]byte(`{"event":"subscribe"}`)), true)
 	}
 
 	time.Sleep(time.Second)
@@ -218,7 +231,7 @@ func TestApplyNewDepthSendsAFreshSnapshotThatMovesForward(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(30 * time.Millisecond)
 
 	require.NoError(t, f.Apply(domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 8, UpdateLevels: 3}))
@@ -287,7 +300,7 @@ func TestAStoppedFeedAcksButSendsNoData(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(40 * time.Millisecond)
 	got := s.drain()
 	require.Len(t, got, 1, "only the ack")
@@ -303,7 +316,7 @@ func TestStartSendsASnapshotFirstThenUpdates(t *testing.T) {
 	f := New(opts)
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	s.drain()
 
 	f.Start()
@@ -320,7 +333,7 @@ func TestStopMakesItSilentAndStartChainsOn(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
+	f.Subscribe(s, "BTC-USDT", ackOf([]byte(`{"event":"subscribe"}`)), true)
 	time.Sleep(30 * time.Millisecond)
 
 	f.Stop()

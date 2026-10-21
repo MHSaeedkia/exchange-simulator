@@ -170,3 +170,15 @@ ex3-raw. `snapshot_request` dropped. No REST, no proxy.
   **50 levels**, JSON numbers, no trailing zeros, no spaces, **sum = price × quantity exactly**
   (50/50). ~2.9 KB. BTCUSDT: ~5 buy + ~2 sell frames per second.
 - Control PING payload `ping` at 20 s.
+
+### Centrifugo rules (nobitex AND bitpin, probed 2026-10-21)
+
+- Before connect: anything but `{"id":N,"connect":{…}}` with N>0 → close **3501 "bad request"**
+  (even `{}`, even `{"connect":{}}` with no id).
+- After connect → 3501: bad JSON (`hello`), `[]`, unknown command (`{"id":2,"foo":{}}`), a
+  second connect, any command with no id (`{"subscribe":…}`, `{"unsubscribe":…}`), and
+  `{"id":3,"subscribe":{}}` (no channel). `{}` after connect is the pong: fine.
+- `{"id":4,"subscribe":{"channel":"<own prefix>"}}` (no market) → acked with NO offset, no data.
+- Other namespace (nobitex `orderbook:`, bitpin `public:orderbook-`, `trades:…`) → error 102.
+- Repeat subscribe → 105; unsubscribe not subscribed → `{"id":N,"unsubscribe":{}}`.
+- Inferred: unsubscribe with no channel closes like subscribe with none.

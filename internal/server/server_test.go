@@ -488,3 +488,31 @@ func TestPongsKeepItOpenUntilMaxLife(t *testing.T) {
 	assert.GreaterOrEqual(t, after, 380*time.Millisecond, "PONGs kept it open past the pong timeout")
 	assert.Less(t, after, 700*time.Millisecond)
 }
+
+// Real nobitex closes the socket with 3501 "bad request" on a message it does not take.
+func TestCentrifugoBadRequestCloses3501(t *testing.T) {
+	ws := domain.Endpoint{Host: "ws.nobitex.ir", Port: 443, Path: "/connection/websocket"}
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := nobitex.New(nobitex.Options{ID: 1, WS: ws})
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+ws.Path, http.Header{"Host": []string{ws.Host}})
+	require.NoError(t, err)
+	defer c.Close()
+	send(t, c, `hello`)
+	require.NoError(t, c.SetReadDeadline(time.Now().Add(time.Second)))
+	_, _, err = c.ReadMessage()
+	var ce *websocket.CloseError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, 3501, ce.Code)
+	assert.Equal(t, "bad request", ce.Text)
+	assert.Eventually(t, func() bool { return s.Connections("nobitex") == 0 }, time.Second, 5*time.Millisecond)
+}

@@ -83,10 +83,13 @@ Centrifugo at `wss://ws.nobitex.ir/connection/websocket`. No REST.
 | Client sends | Fake answers |
 |---|---|
 | `{"id":1,"connect":{}}` | `{"id":1,"connect":{"client":…,"version":"6.9.3 OSS","ping":25,"pong":true}}` |
-| `{"id":1,"subscribe":{"channel":"public:orderbook-BTCUSDT"}}` | `{"id":1,"subscribe":{"recoverable":true,"epoch":…,"positioned":true}}`, then pushes (no snapshot) |
+| `{"id":1,"subscribe":{"channel":"public:orderbook-BTCUSDT"}}` | `{"id":1,"subscribe":{"recoverable":true,"epoch":…,"offset":<current>,"positioned":true}}`, then pushes (no snapshot) |
+| the same subscribe again on one connection | `{"id":1,"error":{"code":105,"message":"already subscribed"}}` |
 | `{"id":1,"unsubscribe":{"channel":"public:orderbook-BTCUSDT"}}` | `{"id":1,"unsubscribe":{}}`; that market stops |
 | `{}` (answer to a ping) | nothing |
-| a channel outside `public:orderbook-` | `{"id":1,"error":{"code":102,"message":"unknown channel"}}` |
+| a channel of another namespace | `{"id":1,"error":{"code":102,"message":"unknown channel"}}` |
+| `public:orderbook-` (no market) | an ack with no offset, no data |
+| anything before connect; bad JSON; a second connect; an unknown command; a command with no `id`; a subscribe with no channel | close `3501 bad request` |
 | (server, every 25 s) | `{}` |
 
 Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`.
@@ -96,7 +99,8 @@ Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,l
 
 Centrifugo at `wss://centrifugo.bitpin.ir/connection/websocket`, channel `orderbook:BTC_USDT`.
 No REST. The same protocol and replies as nobitex (version `6.9.2 OSS`). Every push is the
-WHOLE book (50 levels), written as bitpin writes it, with spaces:
+WHOLE book (50 levels), written as bitpin writes it, with spaces and prices padded to the
+decimals of `BITPIN_PRICE_STEP` (`"84150.00"`):
 `{"push":{"channel":…,"pub":{"data":{"bids": […], "asks": […], "volume_ask": …, "volume_bid": …, "symbol": …, "event": "market_data", "price": …, "event_time": "…Z"},"offset":N}}}`.
 
 ### wallex (3)

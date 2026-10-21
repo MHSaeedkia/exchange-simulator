@@ -215,7 +215,7 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 	case "nobitex":
 		return nobitex.New(nobitex.Options{ID: e.ID, WS: e.WS}), nil
 	case "bitpin":
-		return bitpin.New(bitpin.Options{ID: e.ID, WS: e.WS}), nil
+		return bitpin.New(bitpin.Options{ID: e.ID, WS: e.WS, PriceDecimals: e.Shape.PriceScale()}), nil
 	case "wallex":
 		return wallex.New(wallex.Options{ID: e.ID, WS: e.WS}), nil
 	}

@@ -87,19 +87,20 @@ type session struct {
 
 func (s *session) ID() string         { return "c0e31519" }
 func (s *session) Send(b []byte) bool { s.sent = append(s.sent, string(b)); return true }
-func (s *session) Subscribe(m string, ack []byte, _ bool) {
+func (s *session) Subscribe(m string, ack func(int64) []byte, _ bool) {
 	s.subscribed = append(s.subscribed, m)
-	s.Send(ack)
+	s.Send(ack(0))
 }
 func (s *session) Unsubscribe(string, []byte) {}
+func (s *session) Close(int, string)          {}
 
 // The Centrifugo protocol itself is tested in package centrifugo; here only what is
 // nobitex's: NiFi's channel `public:orderbook-${market}` and the version real nobitex names.
 func TestNobitexChannelAndVersion(t *testing.T) {
 	s := &session{}
-	ex := New(Options{ID: 1})
-	ex.OnMessage(s, []byte(`{"id":1,"connect":{}}`))
-	ex.OnMessage(s, []byte(`{"id":1,"subscribe":{"channel":"public:orderbook-BTCUSDT"}}`))
+	on := New(Options{ID: 1}).Connect(s)
+	on([]byte(`{"id":1,"connect":{}}`))
+	on([]byte(`{"id":1,"subscribe":{"channel":"public:orderbook-BTCUSDT"}}`))
 	assert.Equal(t, []string{"BTCUSDT"}, s.subscribed)
 	require.Len(t, s.sent, 2)
 	assert.Contains(t, s.sent[0], `"version":"6.9.3 OSS"`)

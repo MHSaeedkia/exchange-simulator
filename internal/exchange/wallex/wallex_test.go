@@ -102,13 +102,14 @@ type session struct {
 
 func (s *session) ID() string         { return "c0e31519" }
 func (s *session) Send(b []byte) bool { s.sent = append(s.sent, string(b)); return true }
-func (s *session) Subscribe(m string, ack []byte, snapshot bool) {
+func (s *session) Subscribe(m string, ack func(int64) []byte, snapshot bool) {
 	s.subscribed = append(s.subscribed, m)
 	s.snapshots = append(s.snapshots, snapshot)
 	if ack != nil {
-		s.Send(ack)
+		s.Send(ack(0))
 	}
 }
+func (s *session) Close(int, string) {}
 func (s *session) Unsubscribe(m string, ack []byte) {
 	s.unsubscribed = append(s.unsubscribed, m)
 	if ack != nil {

@@ -29,7 +29,7 @@ import (
 
 // Feed is one exchange's generator, as the server needs it.
 type Feed interface {
-	Subscribe(s domain.Subscriber, market string, ack []byte, snapshot bool)
+	Subscribe(s domain.Subscriber, market string, ack func(seq int64) []byte, snapshot bool)
 	Unsubscribe(s domain.Subscriber, market string, ack []byte)
 	Drop(s domain.Subscriber)
 	Top(market string, n int) (asks, bids []domain.Level, seq int64)
@@ -320,8 +320,15 @@ func (c *conn) Send(msg []byte) bool {
 	}
 }
 
-func (c *conn) Subscribe(market string, ack []byte, snapshot bool) {
+func (c *conn) Subscribe(market string, ack func(seq int64) []byte, snapshot bool) {
 	c.feed.Subscribe(c, market, ack, snapshot)
+}
+
+// Close sends a close frame and ends the connection. Gorilla allows WriteControl beside the
+// write goroutine's writes.
+func (c *conn) Close(code int, text string) {
+	_ = c.ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, text), time.Now().Add(time.Second))
+	c.close()
 }
 func (c *conn) Unsubscribe(market string, ack []byte) { c.feed.Unsubscribe(c, market, ack) }
 

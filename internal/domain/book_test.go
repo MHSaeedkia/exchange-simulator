@@ -32,6 +32,17 @@ func TestDecimalStringKeepsTheScale(t *testing.T) {
 	assert.Equal(t, "5", Decimal{Units: 5}.String())
 }
 
+func TestPriceScaleIsTheMostDecimalsOfBaseAndStep(t *testing.T) {
+	for _, c := range []struct {
+		base, step string
+		want       int
+	}{{"84000", "0.01", 2}, {"62770.5", "1", 1}, {"100", "1", 0}} {
+		s, err := NewShape(c.base, c.step, "1", "2")
+		require.NoError(t, err)
+		assert.Equal(t, c.want, s.PriceScale(), c)
+	}
+}
+
 func TestFormat(t *testing.T) {
 	assert.Equal(t, "62770", format(627700, 1, true))
 	assert.Equal(t, "62770.5", format(627705, 1, true))

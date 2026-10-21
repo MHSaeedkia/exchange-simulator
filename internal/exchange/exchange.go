@@ -26,11 +26,14 @@ type Session interface {
 	// Send queues msg. It blocks while the queue is full and returns false once the
 	// connection is gone.
 	Send(msg []byte) bool
-	// Subscribe sends ack, then — when the exchange is running and snapshot is set — a
-	// snapshot of the market's book, then its updates. Unsubscribe sends ack and stops the
-	// market. A nil ack sends nothing (an exchange that does not answer).
-	Subscribe(market string, ack []byte, snapshot bool)
+	// Subscribe sends ack(seq) — seq is the market's current sequence number, for an ack
+	// that names it — then, when the exchange is running and snapshot is set, a snapshot of
+	// the market's book, then its updates. Unsubscribe sends ack and stops the market. A nil
+	// ack sends nothing (an exchange that does not answer).
+	Subscribe(market string, ack func(seq int64) []byte, snapshot bool)
 	Unsubscribe(market string, ack []byte)
+	// Close ends the connection with a WebSocket close frame (code, text).
+	Close(code int, text string)
 }
 
 // Books reads a market's current book, for a REST snapshot.

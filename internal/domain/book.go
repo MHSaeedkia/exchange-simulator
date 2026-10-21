@@ -49,6 +49,10 @@ func NewShape(basePrice, priceStep, qtyMin, qtyMax string) (Shape, error) {
 	return s, nil
 }
 
+// PriceScale is how many decimals a price has before trailing zeros are dropped: the most
+// of the base price's and the step's.
+func (s Shape) PriceScale() int { return s.priceScale }
+
 // MaxDepth is the deepest book whose lowest bid is still above 0.
 func (s Shape) MaxDepth() int {
 	return int((s.base - 1) / s.step)

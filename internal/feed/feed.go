@@ -133,12 +133,12 @@ func (f *Feed) do(fn func()) {
 	}
 }
 
-// Subscribe sends ack, then (when running and snapshot is set) a snapshot of the market's
-// current book, then its updates — what a real exchange does on a subscribe. An exchange
-// whose every push is the whole book sends no snapshot here.
-func (f *Feed) Subscribe(s domain.Subscriber, market string, ack []byte, snapshot bool) {
+// Subscribe sends ack(seq) with the market's current sequence number, then (when running
+// and snapshot is set) a snapshot of its book, then its updates — what a real exchange does
+// on a subscribe. An exchange whose every push is the whole book sends no snapshot here.
+func (f *Feed) Subscribe(s domain.Subscriber, market string, ack func(seq int64) []byte, snapshot bool) {
 	f.do(func() {
-		if ack != nil && !s.Send(ack) {
+		if ack != nil && !s.Send(ack(f.book(market).Seq())) {
 			return
 		}
 		if f.subs[market] == nil {

@@ -115,10 +115,11 @@ type session struct {
 
 func (s *session) ID() string         { return "a4d3ae55" }
 func (s *session) Send(b []byte) bool { s.sent = append(s.sent, string(b)); return true }
-func (s *session) Subscribe(m string, ack []byte, _ bool) {
+func (s *session) Subscribe(m string, ack func(int64) []byte, _ bool) {
 	s.subscribed = append(s.subscribed, m)
-	s.Send(ack)
+	s.Send(ack(0))
 }
+func (s *session) Close(int, string) {}
 func (s *session) Unsubscribe(m string, ack []byte) {
 	s.unsubscribed = append(s.unsubscribed, m)
 	s.Send(ack)

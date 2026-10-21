@@ -6,15 +6,15 @@
 // channel's offset, which moves by one per push. A subscribe gets an ack and no snapshot.
 // The data object is written as real bitpin writes it (captured 2026-10-21): a space after
 // every ':' and ',', `price` as a string, `event_time` ISO-8601 UTC with microseconds.
-// One difference: real bitpin pads prices to two decimals ("84150.00"); here they come as
-// the book prints them ("84150"). The parser reads both the same. The live NiFi group makes
-// no REST call for bitpin, so none is served.
+// Prices are padded to PriceDecimals as bitpin does ("84150.00" for BTC_USDT). The live NiFi
+// group makes no REST call for bitpin, so none is served.
 package bitpin
 
 import (
 	"bytes"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"exchange-simulator/internal/domain"
@@ -30,9 +30,10 @@ const Version = "6.9.2 OSS"
 
 // Options mirrors the BITPIN_* settings in .env.
 type Options struct {
-	ID        int64
-	WS        domain.Endpoint
-	PingEvery time.Duration // 0 = 25 s, as real bitpin
+	ID            int64
+	WS            domain.Endpoint
+	PingEvery     time.Duration // 0 = 25 s, as real bitpin
+	PriceDecimals int           // prices are written with this many decimals (the book's price scale)
 }
 
 // Exchange is the fake bitpin.
@@ -76,28 +77,40 @@ func (e *Exchange) push(market string, b *domain.Book, now time.Time) []byte {
 	symbol, _ := json.Marshal(market)
 	var w bytes.Buffer
 	w.WriteString(`{"bids": `)
-	writeLevels(&w, bids)
+	e.writeLevels(&w, bids)
 	w.WriteString(`, "asks": `)
-	writeLevels(&w, asks)
+	e.writeLevels(&w, asks)
 	w.WriteString(`, "volume_ask": "` + volume(asks) + `", "volume_bid": "` + volume(bids) + `", "symbol": `)
 	w.Write(symbol)
 	// The book has no trades; the best bid stands in for the last price.
-	w.WriteString(`, "event": "market_data", "price": "` + bids[0].Price +
+	w.WriteString(`, "event": "market_data", "price": "` + pad(bids[0].Price, e.opts.PriceDecimals) +
 		`", "event_time": "` + now.UTC().Format("2006-01-02T15:04:05.000000Z") + `"}`)
 	return e.Push(market, b.Seq(), w.Bytes())
 }
 
 // writeLevels writes [["price", "qty"], …]. Prices and quantities are plain decimals, so
 // they need no escaping.
-func writeLevels(w *bytes.Buffer, side []domain.Level) {
+func (e *Exchange) writeLevels(w *bytes.Buffer, side []domain.Level) {
 	w.WriteByte('[')
 	for i, l := range side {
 		if i > 0 {
 			w.WriteString(", ")
 		}
-		w.WriteString(`["` + l.Price + `", "` + l.Qty + `"]`)
+		w.WriteString(`["` + pad(l.Price, e.opts.PriceDecimals) + `", "` + l.Qty + `"]`)
 	}
 	w.WriteByte(']')
+}
+
+// pad gives a price at least decimals decimals: "84150" → "84150.00".
+func pad(price string, decimals int) string {
+	if decimals == 0 {
+		return price
+	}
+	whole, frac, _ := strings.Cut(price, ".")
+	if len(frac) >= decimals {
+		return price
+	}
+	return whole + "." + frac + strings.Repeat("0", decimals-len(frac))
 }
 
 // volume is the sum of a side's quantities.

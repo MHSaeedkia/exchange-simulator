@@ -119,3 +119,18 @@ User: "i need 1, 2, 3 — this simulator should be exactly same as real" (ping/p
 - `exchange.NewUUID` shared by centrifugo and wallex (kafka.NewID is the older copy, left alone).
 - Inferred, not measured: a well-formed subscribe to an invalid channel uses a place.
 - Verified: `go test -race ./...` green (server tests with ms-scale keepalive times). NOT run live.
+
+# Step 4b — the small real behaviours of nobitex/bitpin (2026-10-21)
+
+User: "first add them" (after wallex set the "exactly as real" rule). Probed real nobitex and
+bitpin again for the exact rules (in [[exchange-protocols]] § Centrifugo rules). Two of my
+step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 3501 (not error
+102), and the prefix with no market is ACKED (no offset, no data), not error 102.
+
+- `centrifugo.Protocol` is now a `Connector` (per-connection: connected?, subscribed channels).
+- **`Session.Close(code, text)`** added (gorilla allows WriteControl beside the writer).
+- **`Session.Subscribe(market, ack func(seq int64) []byte, snapshot)`**: the ack is built
+  inside the feed goroutine from the book's current seq — atomic with the subscribe, so the
+  Centrifugo ack's `offset` is exact. okx/wallex ignore seq (wallex passes nil).
+- bitpin pads prices to `Shape.PriceScale()` (= decimals of BASE_PRICE/PRICE_STEP), new accessor.
+- Verified: `go test -race ./...` green, server test for the 3501 close. NOT run live.

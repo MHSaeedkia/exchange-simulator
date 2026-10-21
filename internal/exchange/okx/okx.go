@@ -159,7 +159,7 @@ func (e *Exchange) OnMessage(s exchange.Session, msg []byte) {
 		}
 		ack := Ack(req.ID, req.Op, arg, s.ID())
 		if req.Op == OpSubscribe {
-			s.Subscribe(arg.InstID, ack, true)
+			s.Subscribe(arg.InstID, func(int64) []byte { return ack }, true)
 		} else {
 			s.Unsubscribe(arg.InstID, ack)
 		}

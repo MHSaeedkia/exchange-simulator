@@ -51,7 +51,7 @@ type frame struct {
 // The data object is written with a space after every ':' and ',', as bitpin does.
 func TestPushHasBitpinShape(t *testing.T) {
 	b := book(t, 50)
-	raw := New(Options{ID: 2}).Snapshot("BTC_USDT", b, fixed)
+	raw := New(Options{ID: 2, PriceDecimals: 2}).Snapshot("BTC_USDT", b, fixed)
 
 	var f frame
 	require.NoError(t, json.Unmarshal(raw, &f), string(raw))
@@ -65,9 +65,10 @@ func TestPushHasBitpinShape(t *testing.T) {
 	assert.Equal(t, d.Bids[0][0], d.Price, "the book has no trades: the best bid stands in")
 	assert.Equal(t, "2026-10-21T19:14:48.495001Z", d.EventTime, "ISO-8601 UTC with microseconds: the parser's Instant.parse")
 
+	assert.Equal(t, "84000.00", d.Asks[0][0], "asks best (lowest) first; prices padded to two decimals, as bitpin writes them")
+	assert.Equal(t, "83999.99", d.Bids[0][0], "bids best (highest) first")
+	assert.Equal(t, "84000.10", d.Asks[10][0])
 	asks, bids := b.Top(50)
-	assert.Equal(t, asks[0].Price, d.Asks[0][0], "asks best (lowest) first")
-	assert.Equal(t, bids[0].Price, d.Bids[0][0], "bids best (highest) first")
 	assert.Equal(t, sum(t, asks), d.VolumeAsk, "volume_ask is the sum of the asks' quantities")
 	assert.Equal(t, sum(t, bids), d.VolumeBid)
 
@@ -95,6 +96,13 @@ func TestOddMarketStaysValidJSON(t *testing.T) {
 	assert.Equal(t, `A"B\C`, f.Push.Pub.Data.Symbol)
 }
 
+func TestPad(t *testing.T) {
+	assert.Equal(t, "84150.00", pad("84150", 2))
+	assert.Equal(t, "84150.10", pad("84150.1", 2))
+	assert.Equal(t, "84150.12", pad("84150.12", 2))
+	assert.Equal(t, "84150", pad("84150", 0))
+}
+
 func sum(t *testing.T, side []domain.Level) string {
 	t.Helper()
 	var units int64
@@ -115,19 +123,20 @@ type session struct {
 
 func (s *session) ID() string         { return "c0e31519" }
 func (s *session) Send(b []byte) bool { s.sent = append(s.sent, string(b)); return true }
-func (s *session) Subscribe(m string, ack []byte, _ bool) {
+func (s *session) Subscribe(m string, ack func(int64) []byte, _ bool) {
 	s.subscribed = append(s.subscribed, m)
-	s.Send(ack)
+	s.Send(ack(0))
 }
 func (s *session) Unsubscribe(string, []byte) {}
+func (s *session) Close(int, string)          {}
 
 // The protocol is tested in package centrifugo; here only what is bitpin's: NiFi's channel
 // `orderbook:${market}` and the version real bitpin names.
 func TestBitpinChannelAndVersion(t *testing.T) {
 	s := &session{}
-	ex := New(Options{ID: 2})
-	ex.OnMessage(s, []byte(`{"id":1,"connect":{}}`))
-	ex.OnMessage(s, []byte(`{"id":1,"subscribe":{"channel":"orderbook:BTC_USDT"}}`))
+	on := New(Options{ID: 2}).Connect(s)
+	on([]byte(`{"id":1,"connect":{}}`))
+	on([]byte(`{"id":1,"subscribe":{"channel":"orderbook:BTC_USDT"}}`))
 	assert.Equal(t, []string{"BTC_USDT"}, s.subscribed)
 	require.Len(t, s.sent, 2)
 	assert.Contains(t, s.sent[0], `"version":"6.9.2 OSS"`)
