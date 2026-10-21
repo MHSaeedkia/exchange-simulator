@@ -196,3 +196,46 @@ step-2 guesses were WRONG and are now fixed: `{"id":3,"subscribe":{}}` closes 35
   the "stopped" check used `pgrep -f scratchpad/run/sim` but the process command line was
   `./sim -env …`. Stop background test binaries by PID and check the PID.
 - Verified: `go test -race ./...` green. NOT live (live checks at the end).
+
+# Real-scenario test (2026-10-21, user: "docker is up … test all thing in real scenario")
+
+User chose lpa-core's `docker-compose.prod.yml`. Started only kafka, schema-registry, postgres,
+redis, nifi, jobmanager, taskmanager, with env overrides (no lpa-core file edited):
+`NIFI_JVM_HEAP_INIT/MAX=1536m TASKMANAGER_MEMORY=2500m`. warmup → topics existed (4811);
+the 10 Flink jobs submitted with `flink/run-job.sh` in Makefile order (all RUNNING).
+
+**Kafka mode — VERIFIED for all 9:** simulator container in kafka mode, 50 frames/s each,
+~1 min. For every exchange `ex{id}-raw` = `ex{id}-parsed-flink` = pair-raw = type-validated,
+**0 rejects** (nobitex 3699, bitpin 3696, wallex 3755, ramzinex 3695, bitget 3674, bybit 3675,
+ompfinex 3699, lbank 3676; okx run 2: 3027). (`MARKET_STATUS=unsubscribe` to use all seeded rows
+of 8 exchanges without touching the DB; okx separately with `subscribe`.)
+
+**WebSocket mode through real NiFi — what was VERIFIED:**
+- Image builds (test stage runs). `docker exec nifi getent hosts <all 14 hosts>` → simulator.
+- CA imported into NiFi's JVM cacerts + restart → NiFi's TLS to every exchange host verifies.
+- Flow imported into a fresh NiFi with `POST /nifi-api/process-groups/{root}/process-groups/upload`
+  (Data-Collection.json); CONFIG: `postgres.password=postgres` (compose default),
+  `proxy_server.host=exchange-simulator` (port unchanged) via a parameter-context update request;
+  all 31 controller services ENABLED + VALID; 684 processors running (430 = the disabled Private copy).
+- **All 9 exchanges connected through NiFi** (wallex 10 sockets); okx and lbank WS **through the
+  simulator's proxy**. 18 markets (BTC+ETH ×9) set to `pending-subscribe` in the DB → NiFi's poller
+  sent them, simulator took them, PutSQL set all 18 to `subscribe`; all 9 streamed; 0 missed.
+- REST through the redirect: ompfinex (DNS) and bybit + okx (**through the proxy**) answered
+  lpa-core's snapshot requests.
+
+**Found during the NiFi run:**
+- Local DB lacked `exchange_sockets` (made before 2026-10-03) → every wallex `connected` step
+  failed and retried forever. Added the table + seed exactly from lpa-core's 01_schema/02_seed.
+- ompfinex's first connection was closed 3012 by the simulator: NiFi's first pong came too late
+  (likely before NiFi's connected path stored the session in Redis); real ompfinex has the same
+  4 s rule. The reconnected socket stayed up.
+- Rejects `stale_or_duplicate` on sequenced exchanges: an ARTIFACT of running the simulator twice
+  against the same Flink state (books restart at SEQ_START, Flink remembers the old max).
+  ⇒ **a simulator restart while Flink keeps state causes a reject burst** — open: decide a fix.
+- `ex{id}-raw` end offsets ≈ 2× frames through NiFi: PublishKafka uses transactions; commit
+  markers / aborted records take offsets. Count records, not offsets, on NiFi-fed topics.
+- **Docker VM (8 GB of the Mac's 16) is too small:** the VM kernel OOM-killed the taskmanager once
+  and Kafka twice (`dmesg` in a privileged container shows `global_oom`; Docker's OOMKilled flag
+  stays false). Kafka's prod heap is a fixed 2 GB. Each Kafka restart recovers 4912 logs.
+- NiFi left as configured for the test (flow imported, CA in cacerts, proxy param pointing at
+  the simulator, 18 rows `subscribe`, `exchange_sockets` added).

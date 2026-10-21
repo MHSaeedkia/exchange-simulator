@@ -88,10 +88,11 @@ Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
   — one market per message. Sent by PutWebSocket only while Redis `OKX.conn.state` =
   `CONNECTED`; on PutWebSocket success, PutSQL sets the row to `subscribe` / `unsubscribe`.
   **NiFi never reads the ack** (it only goes to Kafka with the data).
-- **On every `connected`**: session id → Redis, state `CONNECTED`, then
-  `UPDATE exchange_markets SET status='pending-subscribe' WHERE status='subscribe' AND
-  exchange = OKX` → the poller (every 2 s) re-sends every subscribe. So a closed socket heals
-  itself: NiFi reconnects and resubscribes all markets.
+- **On `disconnected`** (CORRECTED 2026-10-21 by a live run — earlier this note said "on
+  connected"): state `DISCONNECTED`, then `UPDATE exchange_markets SET status='pending-subscribe'
+  WHERE status='subscribe' AND exchange = OKX` → the poller re-sends them once the socket is back.
+  On `connected` only the session id and `CONNECTED` go to Redis. **So a FRESH NiFi never
+  resubscribes rows that are already `subscribe`** (seen live: okx's 23 rows stayed unsent).
 - **No ping/pong flow** in the okx group (NiFi never sends `ping`).
 - **Data path**: `text message` → LookupAttribute (`exchange_id`) → ReplaceText `^\s*\{` →
   `{"id":"${uuid}","simulation":0,` → UpdateAttribute (`kafak_topic_raw_data=ex${exchange_id}-raw`,

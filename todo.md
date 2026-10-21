@@ -7,10 +7,10 @@
 - [x] TLS on the real host names with our own test CA (`-gen-certs`, made on start)
 - [x] `docs/REDIRECT.md` + `deploy/docker-compose.yml` (network aliases)
 - [x] Tests green; live check with a NiFi-like TLS client. See [[build-log]]
-- [ ] Run kafka mode in the new layout against a stack (Docker was down)
-- [ ] Build the Docker image once; run it with `deploy/docker-compose.yml`; check `docker exec nifi getent hosts ws.okx.com`
+- [x] Run kafka mode in the new layout against a stack
+- [x] Build the Docker image once; run it with `deploy/docker-compose.yml`; check `docker exec nifi getent hosts ws.okx.com`
 - [x] Steps 3 and 5 of REDIRECT.md settled from the NiFi flow: NiFi uses JVM `cacerts`; proxied calls go to the simulator's own HTTP proxy (`PROXY_PORT`, a test changes only `proxy_server.host`)
-- [ ] Run the redirect against NiFi (aliases + CA in `cacerts` + `proxy_server.host` → `exchange-simulator`)
+- [x] Run the redirect against NiFi (aliases + CA in `cacerts` + `proxy_server.host` → `exchange-simulator`)
 
 ## Exchanges — one step each, from the NiFi flow in `../NIFI-Version-Controller` (read → memory → ask → build)
 
@@ -29,7 +29,10 @@ For each: a block in `config.known` + `.env.example` + an alias line in `deploy/
 
 ## After all exchanges (user, 2026-10-21: live checks at the end)
 
-- [ ] Live check every exchange with a NiFi-like client, then the whole redirect with NiFi
+- [x] Kafka mode against real Kafka + Flink: all 9, 0 rejects
+- [x] Image build, DNS aliases, CA in NiFi cacerts, flow import, proxy param, all 9 connected + subscribed through real NiFi
+- [ ] Clean NiFi run measurement (blocked: Docker VM 8 GB → OOM kills of Kafka/taskmanager; user to raise memory or accept smaller Kafka heap)
+- [ ] Decide: simulator restart vs Flink state (books restart at SEQ_START → stale_or_duplicate burst)
 - [ ] Decide the `EXCHANGES_RUNNING` default (today `okx` only: the others start stopped)
 - [ ] Tell lpa-core (user's call): real lbank `TS` is UTC+8 but LBankParser reads it as UTC → ex9 event times 8 h ahead
 - [ ] Tell NiFi owner (user's call): LBANK ConnectWebSocket uses BITGET's client id; lbank's 59-byte ack is echoed back by the ≤60-byte ping path
