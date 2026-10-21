@@ -61,3 +61,25 @@ The NiFi flow showed okx WS + REST go through an HTTP proxy that DNS cannot catc
 `docs/REDIRECT.md` steps 3 (JVM `cacerts`, from the flow) and 5 (change `proxy_server.host`)
 rewritten. Verified: `go test -race ./...` green, live check as in [[redirect]]. NOT verified:
 anything with NiFi.
+
+# Step 2 — nobitex (2026-10-21)
+
+Facts in [[exchange-protocols]] § nobitex (flow + live probe). Decisions:
+
+- **`Session.Subscribe(market, ack, snapshot bool)`** — the exchange decides whether a new
+  subscriber gets a snapshot. nobitex: no (real nobitex sends none, AND a snapshot at the
+  current offset would repeat the last push's offset → lpa-core `stale_or_duplicate`).
+  okx: yes. The other Centrifugo full-book feeds (bitpin, ramzinex) will likely say no too.
+- **Optional `exchange.Heartbeater`** — the server's write goroutine sends the exchange's own
+  ping (`{}` every 25 s for nobitex) from connect on; not counted as a delivery. Pongs are not
+  enforced (no close on a missing pong).
+- Update = the WHOLE book (BookDepth levels), UPDATE_LEVELS = levels changed between pushes.
+  `lastTradePrice` = best bid (the book has no trades).
+- Not copied (NiFi never meets them; recorded in the package doc): close 3501 on a message
+  before connect / bad JSON (Session has no Close), error 105 on a repeat subscribe (acked
+  again instead), `offset` in the subscribe ack (the ack is built before the book is read).
+- Centrifugo handshake code lives in the nobitex package for now; move it to a shared
+  package when bitpin (the next Centrifugo exchange) needs it.
+- `EXCHANGES_RUNNING` default stays `okx`: nobitex starts STOPPED unless listed.
+
+Verified: `go test -race ./...` green. NOT run live (user: live checks after all exchanges).

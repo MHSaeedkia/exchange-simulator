@@ -24,9 +24,10 @@ type Session interface {
 	// Send queues msg. It blocks while the queue is full and returns false once the
 	// connection is gone.
 	Send(msg []byte) bool
-	// Subscribe sends ack, then — when the exchange is running — a snapshot of the
-	// market's book, then its updates. Unsubscribe sends ack and stops the market.
-	Subscribe(market string, ack []byte)
+	// Subscribe sends ack, then — when the exchange is running and snapshot is set — a
+	// snapshot of the market's book, then its updates. Unsubscribe sends ack and stops the
+	// market.
+	Subscribe(market string, ack []byte, snapshot bool)
 	Unsubscribe(market string, ack []byte)
 }
 
@@ -63,6 +64,12 @@ type Exchange interface {
 
 	// Envelope is a frame as NiFi would publish it to ex{id}-raw (kafka mode).
 	Envelope(frame []byte, id string, simulation int) []byte
+}
+
+// Heartbeater is an exchange whose server pings every client on its own (Centrifugo's {}
+// every 25 s). The server sends msg as a text frame every interval, from connect on.
+type Heartbeater interface {
+	Heartbeat() (msg []byte, every time.Duration)
 }
 
 // PrependIDAndSimulation is NiFi's ReplaceText step for a JSON-object payload

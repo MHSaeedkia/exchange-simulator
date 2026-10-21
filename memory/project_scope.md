@@ -37,6 +37,9 @@ metadata:
 - **How an exchange step goes:** read that exchange's group in the flow. Read it, write the needed facts into [[exchange-protocols]], ask about
   anything unclear BEFORE writing code, then build (tests first), live check, update memory +
   `todo.md`, commit. Nothing from the flow file is committed unless the user says so.
+- **Live checks after all exchanges (user, 2026-10-21):** "letls do all tests after all" —
+  build the exchanges one after another with unit tests (TDD still holds), and run the live
+  / NiFi checks for all of them at the end, not per exchange.
 - Runs **in Docker beside NiFi**.
 - lpa-core's `feat/load-generator` branch is kept; `Tibobit/crypto-mock-generator` (an older,
   Kafka-only mock with templates for 8 exchanges) is NOT touched and NOT replaced.

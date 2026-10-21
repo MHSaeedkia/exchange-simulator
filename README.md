@@ -13,7 +13,7 @@ each rate.
 
 Every setting is in `.env` (see `.env.example`). Nothing is hard coded.
 
-**Exchanges so far:** okx (8). The others are added one by one: nobitex (1), bitpin (2),
+**Exchanges so far:** okx (8), nobitex (1). The others are added one by one: bitpin (2),
 wallex (3), ramzinex (4), bitget (5), bybit (6), ompfinex (7), lbank (9).
 
 ## Run it
@@ -50,8 +50,8 @@ curl -XPOST localhost:9501/stop                              # end the last stag
 
 ## What every fake exchange does
 
-- **Before a subscribe:** nothing. **On subscribe:** the exchange's ack, then a snapshot,
-  then updates. **On unsubscribe:** an ack, and that market stops.
+- **Before a subscribe:** nothing (except the exchange's own pings). **On subscribe:** the
+  exchange's ack, then a snapshot (for exchanges that send one), then updates. **On unsubscribe:** an ack, and that market stops.
 - **Sequence numbers never break.** Each update names the one before it, the way that
   exchange does. A snapshot sent to everyone (after a start or a new book depth) moves the
   sequence forward first, so the pipeline takes it as newer.
@@ -75,6 +75,22 @@ curl -XPOST localhost:9501/stop                              # end the last stag
 
 `seqId` moves by a random step (`OKX_SEQ_STEP_MIN`…`OKX_SEQ_STEP_MAX`); `checksum` follows
 okx's rule (CRC32 of the best 25 levels).
+
+### nobitex (1)
+
+Centrifugo at `wss://ws.nobitex.ir/connection/websocket`. No REST.
+
+| Client sends | Fake answers |
+|---|---|
+| `{"id":1,"connect":{}}` | `{"id":1,"connect":{"client":…,"version":"6.9.3 OSS","ping":25,"pong":true}}` |
+| `{"id":1,"subscribe":{"channel":"public:orderbook-BTCUSDT"}}` | `{"id":1,"subscribe":{"recoverable":true,"epoch":…,"positioned":true}}`, then pushes (no snapshot) |
+| `{"id":1,"unsubscribe":{"channel":"public:orderbook-BTCUSDT"}}` | `{"id":1,"unsubscribe":{}}`; that market stops |
+| `{}` (answer to a ping) | nothing |
+| a channel outside `public:orderbook-` | `{"id":1,"error":{"code":102,"message":"unknown channel"}}` |
+| (server, every 25 s) | `{}` |
+
+Every push is the WHOLE book: `{"push":{"channel":…,"pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`.
+`offset` moves by one per push.
 
 ## kafka mode
 
@@ -121,6 +137,7 @@ A source that fails is logged once and skipped. It does not stop the test.
 | `internal/domain` | the book, settings, counters, endpoints |
 | `internal/exchange` | the contract every exchange implements |
 | `internal/exchange/okx` | okx: frames, protocol replies, REST, what NiFi adds |
+| `internal/exchange/nobitex` | nobitex: Centrifugo frames and replies, what NiFi adds |
 | `internal/feed` | one generator per exchange: owns its books, keeps the rate, sends every frame in order |
 | `internal/server` | one listener per port, TLS, routing by host name + path, WebSocket connections |
 | `internal/certs` | the test CA and the server certificate |

@@ -38,7 +38,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 
 | # | exchange | feed | known endpoint | market key (DB) | sequence | event time |
 |---|---|---|---|---|---|---|
-| 1 | nobitex | REST snapshot + WS Centrifugo, BOTH full snapshots | NOT KNOWN | `BTCUSDT` (WS channel `public:orderbook-BTCUSDT`) | WS `pub.offset`, jump 0; REST null | `lastUpdate` epoch ms (number) |
+| 1 | nobitex | WS Centrifugo, every push a full snapshot (the REST branch is gone from NiFi) | `wss://ws.nobitex.ir/connection/websocket` | `BTCUSDT` (WS channel `public:orderbook-BTCUSDT`) | WS `pub.offset`, jump 0; REST null | `lastUpdate` epoch ms (number) |
 | 2 | bitpin | REST snapshot + WS Centrifugo, both full snapshots | NOT KNOWN | `BTC_USDT` (underscore, REST `pair` must match) | WS `pub.offset`, jump 0; REST null | WS ISO string, REST epoch ms number |
 | 3 | wallex | WS only; each frame = full snapshot of ONE side | `wss://api.wallex.ir/ws` | `BTCUSDT` (`BTCUSDT@buyDepth` / `@sellDepth`) | none (null) | none (processing time) |
 | 4 | ramzinex | WS Centrifugo, full snapshot both sides | NOT KNOWN | numeric `12` (channel `orderbook:12`) | `pub.offset`, jump 0 | none (processing time) |
@@ -50,7 +50,7 @@ lpa-core**, so everything marked *NOT KNOWN* waits for that exchange's processor
 
 ## Per exchange — details
 
-- **nobitex (1)**: WS frame `{"push":{"channel":"public:orderbook-BTCUSDT","pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`, levels `[str,str]`, ~24/side. Subscribe NOT KNOWN (Centrifugo `{"subscribe":{"channel":…}}` *(inferred)*).
+- **nobitex (1)**: WS frame `{"push":{"channel":"public:orderbook-BTCUSDT","pub":{"data":{asks,bids,lastTradePrice,lastUpdate},"offset":N}}}`, levels `[str,str]`, 24/side. Built in step 2 — see § nobitex below.
 - **bitpin (2)**: WS channel `orderbook:BTC_USDT`; `data` = `bids, asks, volume_ask, volume_bid, symbol, event:"market_data", price` (number), `event_time`; 50 levels. Subscribe NOT KNOWN.
 - **wallex (3)**: first frame `{"sid":…,"pingInterval":20000,"pingTimeout":30000,"maxPayload":1048576}`; server sends a control PING every 20 s, closes at 30 s without PONG; cuts EVERY connection at exactly 30 min. Frame `["BTCUSDT@buyDepth",[{"price":62525.04,"quantity":0.000451,"sum":…}]]` (numbers). 2 subscribes per market (buy + sell); no snapshot on subscribe. **Limit: 51 subscribe messages per connection for its whole life**, #52+ ignored silently. Subscribe text NOT KNOWN. Facts in [[project-nifi-wallex-ws]].
 - **ramzinex (4)**: `data.buys`/`data.sells` 7-element numeric arrays `[price,qty,notional,false,null,int,epochMs]`, BOTH sides sorted descending. Subscribe NOT KNOWN.
@@ -102,3 +102,30 @@ Source: the NiFi flow in the sibling repo (see [[project-scope]]), group
   `{"action":"snapshot","pair":"${pair}"}` (added at the end) → same LookupAttribute/ReplaceText
   path → ex8-raw.
 - TLS: JVM default truststore (see Common). Proxy: WS AND REST (see Common).
+
+### nobitex (1) — read from the flow + measured live 2026-10-21
+
+**NiFi side (group `NOBITEX`):**
+- On `connected`: state `CONNECTED` → session id to Redis → sends **`{"id":1,"connect":{}}`**.
+- Subscribe / unsubscribe: **`{"id":1,"${status:replace('pending-', '')}":{"channel":"public:orderbook-${market}"}}`**
+  (always id 1). PutSQL sets the row on PutWebSocket success; the ack is never read.
+- **Ping path:** a text frame of **10 bytes or less** (`fileSize:le(10)`) is a ping → NiFi
+  sends `{}` back and does NOT publish it. Bigger frames → id/simulation → ex1-raw (acks too).
+- On `disconnected` (not on connected, unlike okx): `subscribe` rows → `pending-subscribe`,
+  so the poller resubscribes once the socket is back.
+- `snapshot_request` is dropped (`is_snapshot` auto-terminated). **No REST call** in the live
+  group (the old REST branch was deleted).
+- WS direct, no proxy → caught by the DNS alias.
+
+**Real nobitex, measured from a dev Mac (raw socket, ~1 min):**
+- connect reply `{"id":1,"connect":{"client":"<uuid>","version":"6.9.3 OSS","ping":25,"pong":true}}`.
+- subscribe reply `{"id":1,"subscribe":{"recoverable":true,"epoch":"<8 letters>","offset":<last>,"positioned":true}}`
+  (no `offset` key for a channel that has none yet). **No snapshot on subscribe**: first push
+  on the normal beat (~1 s later).
+- unsubscribe reply `{"id":1,"unsubscribe":{}}` (also when not subscribed).
+- second subscribe to the same channel → `{"id":1,"error":{"code":105,"message":"already subscribed"}}`.
+- unknown market (`public:orderbook-NOPEUSDT`) → accepted (ack, no data).
+- subscribe before connect → socket closed, code **3501 "bad request"**.
+- server ping `{}` (first at ~18 s, then every 25 s); client answers `{}`.
+- pushes ~1/s per market, ~1.2 KB, **24 levels per side**, offset **+1 per push**, keys
+  exactly `push.channel`, `push.pub.{data,offset}`, `data.{asks,bids,lastTradePrice,lastUpdate}`.

@@ -154,6 +154,14 @@ var known = []block{
 		basePrice: "62770", priceStep: "0.1", qtyMin: "0.00100000", qtyMax: "5.00000000",
 		seqStart: "1000000000", seqStepMin: "1", seqStepMax: "100", // real okx steps by 3…960
 	},
+	{
+		name: "nobitex", id: "1",
+		wsHost: "ws.nobitex.ir", wsPort: "443", wsPath: "/connection/websocket",
+		// No REST: NiFi's live NOBITEX group makes no REST call.
+		records: "100", periodMS: "1000", bookDepth: "24", updateLevels: "5", // nobitex sends 24 levels, every push the whole book
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.000001", qtyMax: "0.200000",
+		seqStart: "100000", seqStepMin: "1", seqStepMax: "1", // a Centrifugo offset moves by one
+	},
 }
 
 // Load reads envFile into the process environment — a missing file is not an error, it

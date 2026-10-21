@@ -66,7 +66,16 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Endpoint{Host: "www.okx.com", Port: 443, Path: "/api/v5/market/books"}, okx.REST)
 	assert.True(t, okx.HasREST)
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
-	assert.Equal(t, []string{"ws.okx.com", "www.okx.com"}, cfg.Hosts())
+	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir"}, cfg.Hosts())
+
+	nobitex, ok := cfg.Exchange("nobitex")
+	require.True(t, ok)
+	assert.Equal(t, int64(1), nobitex.ID)
+	assert.Equal(t, domain.Endpoint{Host: "ws.nobitex.ir", Port: 443, Path: "/connection/websocket"}, nobitex.WS, "the REAL address")
+	assert.False(t, nobitex.HasREST, "NiFi's NOBITEX group makes no REST call")
+	assert.Equal(t, 24, nobitex.Defaults.BookDepth, "real nobitex sends 24 levels per side")
+	assert.Equal(t, int64(1), nobitex.SeqStepMin, "a Centrifugo offset moves by one")
+	assert.Equal(t, int64(1), nobitex.SeqStepMax)
 }
 
 func TestFromEnv_ExchangeBlockIsPrefixed(t *testing.T) {

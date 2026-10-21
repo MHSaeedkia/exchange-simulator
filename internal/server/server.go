@@ -29,7 +29,7 @@ import (
 
 // Feed is one exchange's generator, as the server needs it.
 type Feed interface {
-	Subscribe(s domain.Subscriber, market string, ack []byte)
+	Subscribe(s domain.Subscriber, market string, ack []byte, snapshot bool)
 	Unsubscribe(s domain.Subscriber, market string, ack []byte)
 	Drop(s domain.Subscriber)
 	Top(market string, n int) (asks, bids []domain.Level, seq int64)
@@ -210,19 +210,32 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request, ex exchange.Exc
 	s.log.Info("websocket disconnected", "exchange", ex.Name(), "conn", c.id)
 }
 
+// write is the connection's only writer: queued frames, and the exchange's own ping when
+// it has one (not counted as a delivery: it is not market data).
 func (s *Server) write(c *conn, ex exchange.Exchange) {
+	var beat <-chan time.Time
+	var beatMsg []byte
+	if h, ok := ex.(exchange.Heartbeater); ok {
+		msg, every := h.Heartbeat()
+		ticker := time.NewTicker(every)
+		defer ticker.Stop()
+		beat, beatMsg = ticker.C, msg
+	}
 	for {
+		var msg []byte
 		select {
 		case <-c.done:
 			return
-		case msg := <-c.queue:
-			_ = c.ws.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
-			if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
-				c.feed.SendError()
-				s.log.Warn("websocket write failed, closing", "exchange", ex.Name(), "conn", c.id, "err", err)
-				c.close()
-				return
-			}
+		case msg = <-c.queue:
+		case <-beat:
+			msg = beatMsg
+		}
+		_ = c.ws.SetWriteDeadline(time.Now().Add(s.opts.WriteTimeout))
+		if err := c.ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+			c.feed.SendError()
+			s.log.Warn("websocket write failed, closing", "exchange", ex.Name(), "conn", c.id, "err", err)
+			c.close()
+			return
 		}
 	}
 }
@@ -257,7 +270,9 @@ func (c *conn) Send(msg []byte) bool {
 	}
 }
 
-func (c *conn) Subscribe(market string, ack []byte)   { c.feed.Subscribe(c, market, ack) }
+func (c *conn) Subscribe(market string, ack []byte, snapshot bool) {
+	c.feed.Subscribe(c, market, ack, snapshot)
+}
 func (c *conn) Unsubscribe(market string, ack []byte) { c.feed.Unsubscribe(c, market, ack) }
 
 func (c *conn) close() {

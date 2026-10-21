@@ -115,7 +115,7 @@ type session struct {
 
 func (s *session) ID() string         { return "a4d3ae55" }
 func (s *session) Send(b []byte) bool { s.sent = append(s.sent, string(b)); return true }
-func (s *session) Subscribe(m string, ack []byte) {
+func (s *session) Subscribe(m string, ack []byte, _ bool) {
 	s.subscribed = append(s.subscribed, m)
 	s.Send(ack)
 }

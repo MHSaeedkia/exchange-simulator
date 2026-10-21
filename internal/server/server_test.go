@@ -25,6 +25,7 @@ import (
 
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/domain"
+	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
 	"exchange-simulator/internal/feed"
 )
@@ -374,5 +375,32 @@ func TestProxyRefusesWhatTheSimulatorDoesNotPlay(t *testing.T) {
 		resp.Body.Close()
 		conn.Close()
 		assert.Equal(t, c.status, resp.StatusCode, c.request)
+	}
+}
+
+// A Centrifugo exchange's server pings every client with {} from connect on, and NiFi's
+// NOBITEX group answers {} (its frames of 10 bytes or less are the ping path).
+func TestHeartbeatIsSentFromConnect(t *testing.T) {
+	ws := domain.Endpoint{Host: "ws.nobitex.ir", Port: 443, Path: "/connection/websocket"}
+	shape, err := domain.NewShape("100", "1", "0.1", "9.9")
+	require.NoError(t, err)
+	ex := nobitex.New(nobitex.Options{ID: 1, WS: ws, PingEvery: 20 * time.Millisecond})
+	f := feed.New(feed.Options{Encoder: ex, Shape: shape, Settings: domain.Settings{Records: 1, PeriodMS: 1000, BookDepth: 5}, Tick: time.Millisecond, Seed: 1})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go f.Run(ctx)
+	s, err := New([]Route{{Exchange: ex, Feed: f}}, Options{SendBuffer: 10, WriteTimeout: time.Second}, quiet)
+	require.NoError(t, err)
+	srv := httptest.NewServer(s.Handler())
+	t.Cleanup(srv.Close)
+
+	c, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+ws.Path, http.Header{"Host": []string{ws.Host}})
+	require.NoError(t, err)
+	defer c.Close()
+	for range 2 {
+		require.NoError(t, c.SetReadDeadline(time.Now().Add(time.Second)))
+		_, b, err := c.ReadMessage()
+		require.NoError(t, err)
+		assert.Equal(t, "{}", string(b))
 	}
 }

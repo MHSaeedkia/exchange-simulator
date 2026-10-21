@@ -109,7 +109,7 @@ func TestSubscribeSendsAckThenSnapshotThenUpdates(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 
-	f.Subscribe(s, "BTC-USDT", okx.Ack("", okx.OpSubscribe, okx.Arg{Channel: okx.Channel, InstID: "BTC-USDT"}, "c1"))
+	f.Subscribe(s, "BTC-USDT", okx.Ack("", okx.OpSubscribe, okx.Arg{Channel: okx.Channel, InstID: "BTC-USDT"}, "c1"), true)
 	time.Sleep(60 * time.Millisecond)
 	got := s.drain()
 
@@ -125,11 +125,31 @@ func TestSubscribeSendsAckThenSnapshotThenUpdates(t *testing.T) {
 	chained(t, got, "BTC-USDT")
 }
 
+// An exchange whose every push is the whole book (nobitex) sends a new subscriber no
+// snapshot: one at the current number would repeat the last push's number, and the
+// pipeline drops that as stale_or_duplicate.
+func TestSubscribeWithoutSnapshotSendsAckThenUpdates(t *testing.T) {
+	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 2}))
+	start(t, f)
+	s := newSub("c1")
+
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), false)
+	time.Sleep(60 * time.Millisecond)
+	got := s.drain()
+
+	require.Greater(t, len(got), 2)
+	assert.Equal(t, "subscribe", got[0].Event)
+	for _, fr := range got[1:] {
+		assert.Equal(t, okx.ActionUpdate, fr.Action)
+	}
+	assert.Zero(t, f.Counters().Snapshots)
+}
+
 func TestUnsubscribeStopsTheMarket(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(30 * time.Millisecond)
 
 	f.Unsubscribe(s, "BTC-USDT", []byte(`{"event":"unsubscribe"}`))
@@ -145,10 +165,10 @@ func TestALateSubscriberJoinsTheSameChain(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	early, late := newSub("early"), newSub("late")
-	f.Subscribe(early, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(early, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(30 * time.Millisecond)
 
-	f.Subscribe(late, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(late, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(30 * time.Millisecond)
 
 	got := late.drain()
@@ -162,7 +182,7 @@ func TestRateIsSharedByAllMarkets(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 	for _, m := range []string{"A-USDT", "B-USDT"} {
-		f.Subscribe(s, m, []byte(`{"event":"subscribe"}`))
+		f.Subscribe(s, m, []byte(`{"event":"subscribe"}`), true)
 	}
 
 	time.Sleep(time.Second)
@@ -183,7 +203,7 @@ func TestApplyNewDepthSendsAFreshSnapshotThatMovesForward(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(30 * time.Millisecond)
 
 	require.NoError(t, f.Apply(domain.Settings{Records: 10, PeriodMS: 10, BookDepth: 8, UpdateLevels: 3}))
@@ -252,7 +272,7 @@ func TestAStoppedFeedAcksButSendsNoData(t *testing.T) {
 	start(t, f)
 	s := newSub("c1")
 
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(40 * time.Millisecond)
 	got := s.drain()
 	require.Len(t, got, 1, "only the ack")
@@ -268,7 +288,7 @@ func TestStartSendsASnapshotFirstThenUpdates(t *testing.T) {
 	f := New(opts)
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	s.drain()
 
 	f.Start()
@@ -285,7 +305,7 @@ func TestStopMakesItSilentAndStartChainsOn(t *testing.T) {
 	f := New(options(t, domain.Settings{Records: 20, PeriodMS: 10, BookDepth: 5, UpdateLevels: 1}))
 	start(t, f)
 	s := newSub("c1")
-	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`))
+	f.Subscribe(s, "BTC-USDT", []byte(`{"event":"subscribe"}`), true)
 	time.Sleep(30 * time.Millisecond)
 
 	f.Stop()

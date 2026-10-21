@@ -15,7 +15,7 @@
 ## Exchanges — one step each, from the NiFi flow in `../NIFI-Version-Controller` (read → memory → ask → build)
 
 - [x] **okx (8)** — flow read (facts in [[exchange-protocols]]); matches what step 1 built; the proxy it needs is built (step 1b)
-- [ ] nobitex (1)
+- [x] nobitex (1) — built with unit tests; live check waits for the end (see below)
 - [ ] bitpin (2)
 - [ ] wallex (3) — server PING every 20 s, cuts at 30 min, 51-subscribe limit: decide which of these to copy
 - [ ] ramzinex (4)
@@ -25,6 +25,11 @@
 - [ ] lbank (9)
 
 For each: a block in `config.known` + `.env.example` + an alias line in `deploy/docker-compose.yml`, a package under `internal/exchange/`, a case in `main.newExchange`, tests against `docs/sample-raw-data.md`, a section in [[exchange-protocols]].
+
+## After all exchanges (user, 2026-10-21: live checks at the end)
+
+- [ ] Live check every exchange with a NiFi-like client, then the whole redirect with NiFi
+- [ ] Decide the `EXCHANGES_RUNNING` default (today `okx` only: the others start stopped)
 
 ## Later (ask the user first)
 

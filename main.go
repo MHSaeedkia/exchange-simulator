@@ -30,6 +30,7 @@ import (
 	"exchange-simulator/internal/certs"
 	"exchange-simulator/internal/config"
 	"exchange-simulator/internal/exchange"
+	"exchange-simulator/internal/exchange/nobitex"
 	"exchange-simulator/internal/exchange/okx"
 	"exchange-simulator/internal/feed"
 	"exchange-simulator/internal/httpapi"
@@ -209,6 +210,8 @@ func newExchange(e config.Exchange) (exchange.Exchange, error) {
 	switch e.Name {
 	case "okx":
 		return okx.New(okx.Options{ID: e.ID, WS: e.WS, REST: e.REST, StepMin: e.SeqStepMin, StepMax: e.SeqStepMax}), nil
+	case "nobitex":
+		return nobitex.New(nobitex.Options{ID: e.ID, WS: e.WS}), nil
 	}
 	return nil, fmt.Errorf("exchange %q has a config block but no implementation", e.Name)
 }
