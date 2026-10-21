@@ -1,0 +1,13 @@
+# PromQL queries recorded each sample, one per line: `name: promql`.
+# Each must return ONE number — wrap it in max(), sum() or avg().
+# Metric names are the ones monitoring/prometheus/rules/flink.yml already uses.
+
+# Biggest Kafka lag of any Flink source (records).
+flink_lag_max: max(flink_taskmanager_job_task_operator_KafkaSourceReader_KafkaConsumer_records_lag_max)
+# Busiest and most back-pressured task (ms per second, 1000 = always).
+flink_busy_max: max(flink_taskmanager_job_task_busyTimeMsPerSecond)
+flink_backpressure_max: max(flink_taskmanager_job_task_backPressuredTimeMsPerSecond)
+# Garbage collection time (ms per second).
+flink_gc_max: max(flink_taskmanager_Status_JVM_GarbageCollector_All_TimeMsPerSecond)
+# Records per second reaching all raw topics ex1-raw … ex9-raw (kafka-exporter).
+raw_in_per_sec: sum(rate(kafka_topic_partition_current_offset{topic=~"ex[0-9]+-raw"}[1m]))

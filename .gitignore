@@ -1,0 +1,6 @@
+# Real config never gets committed — .env.example is the documented template.
+.env
+# Each run writes its report here.
+reports/
+# The test CA and the server key are private: anyone with ca.key can fake any host for NiFi.
+certs/

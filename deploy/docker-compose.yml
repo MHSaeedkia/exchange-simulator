@@ -1,0 +1,45 @@
+# Runs exchange-simulator inside lpa-core's docker network and points the REAL exchange
+# host names at it — for every container on that network, NiFi included. NiFi's flows do
+# not change. See docs/REDIRECT.md for the whole procedure and how to undo it.
+#
+#   docker compose -f deploy/docker-compose.yml --env-file .env up -d --build
+#
+# How the redirect works: a network alias is a DNS name that Docker's own DNS answers for
+# containers on the same network, before it asks the internet. So while this container runs,
+# ws.okx.com inside that network means this container. Stop it, and the names resolve to the
+# real exchanges again.
+#
+# Every host name of every exchange in .env must be listed under aliases. One line is added
+# per exchange step, next to its block in .env.example.
+services:
+  exchange-simulator:
+    build: ..
+    container_name: exchange-simulator
+    restart: unless-stopped
+    env_file:
+      - path: ../.env
+        required: false
+    environment:
+      # Inside the container these are fixed; everything else comes from .env.
+      LISTEN_HOST: 0.0.0.0
+      API_ADDR: 0.0.0.0:9501
+      DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      # The CA must survive restarts and rebuilds: NiFi trusts it.
+      - ../certs:/app/certs
+      - ../reports:/app/reports
+      # Docker numbers for the report (read only).
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "${API_PORT:-9501}:9501" # control API, from the host
+    networks:
+      lpa:
+        aliases:
+          - ${OKX_WS_HOST:-ws.okx.com}
+          - ${OKX_REST_HOST:-www.okx.com}
+
+networks:
+  lpa:
+    external: true
+    # lpa-core's compose network: <compose project name>_data-collector-net.
+    name: ${LPA_NETWORK:-lpa-core_data-collector-net}
