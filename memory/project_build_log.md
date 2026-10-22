@@ -267,3 +267,10 @@ Centrifugo offset counter restarts at its constant (the parser orders on u, not 
   trace tool missed them. No idle drops are expected or seen. Lesson: when reading a NiFi
   group, also follow paths rooted at GenerateFlowFile (any processor with no incoming
   connection), not only ConnectWebSocket and the input port.
+
+# Defaults from the user's .env (2026-10-22)
+
+User: "move my .env changes into .env.example and commit". Chose to change the code defaults
+too, so `.env.example` stays equal to the built-in defaults (its header promises that):
+`EXCHANGES_RUNNING` = all 9; okx book `84000 / 0.01 / 0.000001…0.200000`. The config test's
+"too deep" OKX_BOOK_DEPTH moved 1e6 → 1e8 (with step 0.01 a 1e6-level book is now valid).

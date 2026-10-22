@@ -49,7 +49,8 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, ModeWebSocket, cfg.OutputMode)
-	assert.Equal(t, []string{"okx"}, cfg.Running)
+	assert.Equal(t, []string{"nobitex", "bitpin", "wallex", "ramzinex", "bitget", "bybit", "ompfinex", "okx", "lbank"}, cfg.Running,
+		"every exchange sends data from the start")
 	assert.True(t, cfg.TLSEnabled)
 	assert.Equal(t, "certs/ca.crt", cfg.TLSCACert)
 	assert.Equal(t, 2053, cfg.ProxyPort, "the port of NiFi's real proxy: a test changes only its host")
@@ -66,6 +67,9 @@ func TestFromEnv_FallsBackToDefaults(t *testing.T) {
 	assert.Equal(t, domain.Endpoint{Host: "www.okx.com", Port: 443, Path: "/api/v5/market/books"}, okx.REST)
 	assert.True(t, okx.HasREST)
 	assert.Equal(t, domain.Settings{Records: 100, PeriodMS: 1000, BookDepth: 400, UpdateLevels: 5}, okx.Defaults)
+	wantShape, err := domain.NewShape("84000", "0.01", "0.000001", "0.200000")
+	require.NoError(t, err)
+	assert.Equal(t, wantShape, okx.Shape)
 	assert.Equal(t, []string{"ws.okx.com", "www.okx.com", "ws.nobitex.ir", "centrifugo.bitpin.ir", "api.wallex.ir",
 		"websocket.ramzinex.com", "publicapi.ramzinex.com", "ws.bitget.com",
 		"stream.bybit.com", "api.bybit.com", "stream.ompfinex.com", "api.ompfinex.com",
@@ -199,7 +203,7 @@ func TestFromEnv_BadValuesFailBeforeAnythingStarts(t *testing.T) {
 		"WS_SEND_BUFFER":    "0",
 		"OKX_RECORDS":       "ten",
 		"OKX_PERIOD_MS":     "0",
-		"OKX_BOOK_DEPTH":    "1000000", // the lowest bid would go below 0
+		"OKX_BOOK_DEPTH":    "100000000", // the lowest bid would go below 0
 		"OKX_SEQ_STEP_MIN":  "0",
 		"OKX_PRICE_STEP":    "0",
 		"OKX_WS_PORT":       "70000",

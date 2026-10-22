@@ -108,7 +108,7 @@ func (c Config) Hosts() []string {
 
 const (
 	defaultOutputMode        = ModeWebSocket
-	defaultRunning           = "okx"
+	defaultRunning           = "nobitex,bitpin,wallex,ramzinex,bitget,bybit,ompfinex,okx,lbank"
 	defaultListenHost        = "0.0.0.0"
 	defaultTLSEnabled        = "true"
 	defaultTLSCACert         = "certs/ca.crt"
@@ -151,7 +151,7 @@ var known = []block{
 		wsHost: "ws.okx.com", wsPort: "8443", wsPath: "/ws/v5/public",
 		restHost: "www.okx.com", restPort: "443", restPath: "/api/v5/market/books",
 		records: "100", periodMS: "1000", bookDepth: "400", updateLevels: "5", // okx sends 400 levels
-		basePrice: "62770", priceStep: "0.1", qtyMin: "0.00100000", qtyMax: "5.00000000",
+		basePrice: "84000", priceStep: "0.01", qtyMin: "0.000001", qtyMax: "0.200000",
 		seqStart: "1000000000", seqStepMin: "1", seqStepMax: "100", // real okx steps by 3…960
 	},
 	{
